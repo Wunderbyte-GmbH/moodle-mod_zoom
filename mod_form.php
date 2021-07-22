@@ -59,9 +59,7 @@ class mod_zoom_mod_form extends moodleform_mod {
             $errstring = 'zoomerr_usernotfound';
             // After they set up their account, the user should continue to the page they were on.
             $nexturl = $PAGE->url;
-            $langvars = ['url'=>$config->zoomurl];
-            zoom_fatal_error($errstring, 'mod_zoom', $nexturl, $langvars);
-
+            zoom_fatal_error($errstring, 'mod_zoom', $nexturl, $config->zoomurl);
         }
 
         // Array of emails and proper names of Moodle users in this course that
@@ -489,7 +487,7 @@ class mod_zoom_mod_form extends moodleform_mod {
 
             // Proceed only if there is a field of alternative hosts already.
             if ($result !== false) {
-                $alternativehostsdb = explode(',', str_replace(';', ',', $result));
+                $alternativehostsdb = zoom_get_alternative_host_array_from_string($result);
 
                 // Get selectable alternative host users based on the capability.
                 $alternativehostschoices = zoom_get_selectable_alternative_hosts_list($this->context);
@@ -540,8 +538,9 @@ class mod_zoom_mod_form extends moodleform_mod {
 
                 // According to the documentation, the Zoom API separates the email addresses with commas,
                 // but we also want to deal with semicolon-separated lists just in case.
-                $defaultvalues['alternative_hosts_picker'] =
-                        explode(',', str_replace(';', ',', $defaultvalues['alternative_hosts']));
+                $defaultvalues['alternative_hosts_picker'] = zoom_get_alternative_host_array_from_string(
+                    $defaultvalues['alternative_hosts']
+                );
             }
         }
     }
@@ -603,7 +602,7 @@ class mod_zoom_mod_form extends moodleform_mod {
             // If the admin did show the plain input field.
             if ($config->showalternativehosts == ZOOM_ALTERNATIVEHOSTS_INPUTFIELD) {
                 // Check if the listed alternative hosts are valid users on Zoom.
-                 $alternativehosts = explode(',', str_replace(';', ',', $data['alternative_hosts']));
+                $alternativehosts = zoom_get_alternative_host_array_from_string($data['alternative_hosts']);
                 foreach ($alternativehosts as $alternativehost) {
                     if (!($service->get_user($alternativehost))) {
                         $errors['alternative_hosts'] = get_string('zoomerr_alternativehostusernotfound', 'zoom', $alternativehost);
