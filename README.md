@@ -32,6 +32,21 @@ server is properly synchronized with the time servers.
 
 ## Changelog
 
+v4.1
+
+- Allow configuration of Zoom identifier #280 (thanks @jwalits, @abias, @jonlan)
+  - New setting `zoom/apiidentifier`
+- Allow configuration of Zoom API endpoint #293 (thanks @abias, @didier63)
+  - New setting `zoom/apiendpoint`
+- Use case-insensitive email comparison for schedule_for #295 (thanks @stopfstedt, @briannwar)
+
+v4.0
+
+- Fully support recurring meetings #258 (thanks @abias, @jwalits, ETH Zürich)
+  - New setting `zoom/invitationremoveicallink`
+  - Backward incompatible change: exported iCal events now match Moodle's uid format
+- Retroactively fix database schema defaults #291 (thanks @foxlapinou for reporting)
+
 v3.8.1
 
 - Only allow real host to use start_url #285 (thanks @abias for reporting)
