@@ -90,10 +90,10 @@ function zoom_add_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
     }
 
     $zoom->course = (int) $zoom->course;
-    
+
     $service = new mod_zoom_webservice();
-    
-    //Added for assign 
+
+    //Added for assign
     if(isset($zoom->assign)){
         $newhost = $service->get_user($zoom->assign);
         //check if hostid matches selected host
@@ -175,7 +175,7 @@ function zoom_update_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
     $zoom->meeting_id = $updatedzoomrecord->meeting_id;
     $zoom->webinar = $updatedzoomrecord->webinar;
     $service = new mod_zoom_webservice();
-    
+
     $changehost = FALSE;
     //Added for assign
     if(isset($zoom->assign)){
@@ -187,18 +187,18 @@ function zoom_update_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
         }
     }
     //End of Added
-    
+
     //if the assigned host has been changed, we need to change the host id
     //since the zoom api does not allow the host id to be update we must then delete, and create a new meeting
     if($changehost){
         //Delete current meeting
         $oldid = $zoom->instance;
         // If the meeting is missing from zoom, don't bother with the webservice.
-        
+
         if (!$ogzoom = $DB->get_record('zoom', array('id' => $oldid))) {
             return false;
         }
-        
+
         if ($ogzoom->exists_on_zoom) {
             try {
                 $service->delete_meeting($ogzoom->meeting_id, $ogzoom->webinar);
@@ -211,27 +211,27 @@ function zoom_update_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
         //Create new meeting with updated info
         $response = $service->create_meeting($zoom);
         $zoom = populate_zoom_from_response($zoom, $response);
-        
+
         $zoom->id = $oldid;
         $zoom->timemodified = time();
         //update db with new meeting info
         $DB->update_record('zoom', $zoom);
-        
+
         zoom_calendar_item_update($zoom);
         zoom_grade_item_update($zoom);
-        
+
         return true;
-        
+
     }else{
         // The object received from mod_form.php returns instance instead of id for some reason.
         $zoom->id = $zoom->instance;
         $zoom->timemodified = time();
         $DB->update_record('zoom', $zoom);
-        
+
         $updatedzoomrecord = $DB->get_record('zoom', array('id' => $zoom->instance));
         $zoom->meeting_id = $updatedzoomrecord->meeting_id;
         $zoom->webinar = $updatedzoomrecord->webinar;
-        
+
         // Update meeting on Zoom.
         try {
             $service->update_meeting($zoom);
@@ -245,16 +245,16 @@ function zoom_update_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
         } catch (moodle_exception $error) {
             return false;
         }
-        
+
         // Get the updated meeting info from zoom, before updating calendar events.
         $response = $service->get_meeting_webinar_info($zoom->meeting_id, $zoom->webinar);
         $zoom = populate_zoom_from_response($zoom, $response);
         zoom_calendar_item_update($zoom);
         zoom_grade_item_update($zoom);
-        
+
         return true;
     }
-   
+
 }
 
 /**
@@ -878,7 +878,7 @@ function zoom_pluginfile($course, $cm, $context, $filearea, array $args, $forced
 /*For Alternative Host Select */
 
 /**
- * Return a string of email address coressponding to selected 
+ * Return a string of email address coressponding to selected
  *
  * @param array $teacheremails all teachers added as alternative hosts
  * @return string of emails to append to zoom meeting
@@ -928,6 +928,54 @@ function zoom_extend_navigation(navigation_node $navref, stdClass $course, stdCl
  * @todo implement this function
  */
 function zoom_extend_settings_navigation(settings_navigation $settingsnav, navigation_node $zoomnode=null) {
+}
+/**
+ * Return the string parameter for zoomerr_meetingnotfound.
+ *
+ * @param string $cmid
+ * @return stdClass
+ */
+function meetingnotfound_param($cmid) {
+   // Provide links to recreate and delete.
+   $recreate = new moodle_url('/mod/zoom/recreate.php', array('id' => $cmid, 'sesskey' => sesskey()));
+   $delete = new moodle_url('/course/mod.php', array('delete' => $cmid, 'sesskey' => sesskey()));
+
+   // Convert links to strings and pass as error parameter.
+   $param = new stdClass();
+   $param->recreate = $recreate->out();
+   $param->delete = $delete->out();
+
+   return $param;
+}
+/**
+ * Adds information about recent messages for the course view page
+ * to the course-module object.
+ * @param cm_info $cm Course-module object
+ */
+
+function zoom_cm_info_view(cm_info $cm) {
+
+    global $DB;
+
+
+    if (!$cm->uservisible) {
+        return;
+    }
+
+    $config = get_config('zoom');
+    $zoom  = $DB->get_record('zoom', array('id' => $cm->instance), '*');
+
+    $message = get_string('zoomerr_meetingnotfound', 'mod_zoom', meetingnotfound_param($cm->id));
+   //$data1 ="alert alert-danger";
+   //$data2 ="";
+   //$result = implode(' ', array($data1, $data2));
+
+  // var_dump($result);
+    if ($zoom->exists_on_zoom == 0) {
+          $out .= $message;
+    }
+
+    $cm->set_after_link("<div style=".'width:100%'." id=".'customize-alert'." class=".'alert'.">"."<div style=".'width:100%'." role=".'alert'." class=".'alert-warning'.">"."<button type=".'button'." class=".'close'." data-dismiss=".'alert'.">×</button>".$out."</div>"."</div>");
 }
 
 /**
