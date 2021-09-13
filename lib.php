@@ -964,16 +964,17 @@ function zoom_cm_info_view(cm_info $cm) {
 
     $config = get_config('zoom');
     $zoom  = $DB->get_record('zoom', array('id' => $cm->instance), '*');
-
     $message = get_string('zoomerr_meetingnotfound', 'mod_zoom', meetingnotfound_param($cm->id));
-   //$data1 ="alert alert-danger";
-   //$data2 ="";
-   //$result = implode(' ', array($data1, $data2));
 
-  // var_dump($result);
-    if ($zoom->exists_on_zoom == 0) {
-          $out .= $message;
+    if ($iszoommanager) {
+        if ($zoom->exists_on_zoom == 0) {
+            $out .= $message;
+      }
+    } else {
+        $out .= get_string('zoomerr_meetingnotfound_info', 'mod_zoom');
+
     }
+
 
     $cm->set_after_link("<div style=".'width:100%'." id=".'customize-alert'." class=".'alert'.">"."<div style=".'width:100%'." role=".'alert'." class=".'alert-warning'.">"."<button type=".'button'." class=".'close'." data-dismiss=".'alert'.">×</button>".$out."</div>"."</div>");
 }
