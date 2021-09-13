@@ -957,19 +957,22 @@ function zoom_cm_info_view(cm_info $cm) {
 
     global $DB;
 
-
     if (!$cm->uservisible) {
         return;
     }
 
     $config = get_config('zoom');
     $zoom  = $DB->get_record('zoom', array('id' => $cm->instance), '*');
-    $message = get_string('zoomerr_meetingnotfound', 'mod_zoom', meetingnotfound_param($cm->id));
+    //$message = get_string('zoomerr_meetingnotfound', 'mod_zoom', meetingnotfound_param($cm->id));
+
+    $context = context_module::instance($cm->id);
+    $iszoommanager = has_capability('mod/zoom:addinstance', $context);
 
     if ($iszoommanager) {
+
         if ($zoom->exists_on_zoom == 0) {
-            $out .= $message;
-      }
+            $out .= get_string('zoomerr_meetingnotfound', 'mod_zoom', meetingnotfound_param($cm->id));
+        }
     } else {
         $out .= get_string('zoomerr_meetingnotfound_info', 'mod_zoom');
 
