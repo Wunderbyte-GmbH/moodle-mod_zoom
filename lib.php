@@ -963,7 +963,6 @@ function zoom_cm_info_view(cm_info $cm) {
 
     $config = get_config('zoom');
     $zoom  = $DB->get_record('zoom', array('id' => $cm->instance), '*');
-    //$message = get_string('zoomerr_meetingnotfound', 'mod_zoom', meetingnotfound_param($cm->id));
 
     $context = context_module::instance($cm->id);
     $iszoommanager = has_capability('mod/zoom:addinstance', $context);
@@ -972,15 +971,17 @@ function zoom_cm_info_view(cm_info $cm) {
 
         if ($zoom->exists_on_zoom == 0) {
             $out .= get_string('zoomerr_meetingnotfound', 'mod_zoom', meetingnotfound_param($cm->id));
+            //$style = \core\output\notification::NOTIFY_ERROR;
         }
     } else {
+
         $out .= get_string('zoomerr_meetingnotfound_info', 'mod_zoom');
 
     }
-
-
+    if ($zoom->exists_on_zoom == 0) {
     $cm->set_after_link("<div style=".'width:100%'." id=".'customize-alert'." class=".'alert'.">"."<div style=".'width:100%'." role=".'alert'." class=".'alert-warning'.">"."<button type=".'button'." class=".'close'." data-dismiss=".'alert'.">×</button>".$out."</div>"."</div>");
-}
+     }
+    }
 
 /**
  * Get icon mapping for font-awesome.
