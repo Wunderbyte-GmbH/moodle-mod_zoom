@@ -109,9 +109,6 @@ define('ZOOM_MEETING_EXPIRED','ZOOM_MEETING_EXPIRED');
 
 /**
  * Entry not found on Zoom.
- *
- * @copyright  2020 UC Regents
- * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class zoom_not_found_exception extends moodle_exception {
     /**
@@ -134,9 +131,6 @@ class zoom_not_found_exception extends moodle_exception {
 
 /**
  * Bad request received by Zoom.
- *
- * @copyright  2020 UC Regents
- * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class zoom_bad_request_exception extends moodle_exception {
     /**
@@ -159,9 +153,6 @@ class zoom_bad_request_exception extends moodle_exception {
 
 /**
  * Couldn't succeed within the allowed number of retries.
- *
- * @copyright  2020 UC Regents
- * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class zoom_api_retry_failed_exception extends moodle_exception {
     /**
@@ -187,9 +178,6 @@ class zoom_api_retry_failed_exception extends moodle_exception {
 
 /**
  * Exceeded daily API limit.
- *
- * @copyright  2020 UC Regents
- * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class zoom_api_limit_exception extends moodle_exception {
     /**
@@ -306,7 +294,7 @@ function zoom_get_instance_setup() {
         $course     = $DB->get_record('course', array('id' => $zoom->course), '*', MUST_EXIST);
         $cm         = get_coursemodule_from_instance('zoom', $zoom->id, $course->id, false, MUST_EXIST);
     } else {
-        print_error(get_string('zoomerr_id_missing', 'zoom'));
+        throw new moodle_exception('zoomerr_id_missing', 'mod_zoom');
     }
 
     require_login($course, true, $cm);
@@ -484,7 +472,7 @@ function zoom_get_state($zoom) {
 /**
  * Get the Zoom id of the currently logged-in user.
  *
- * @param boolean $required If true, will error if the user doesn't have a Zoom account.
+ * @param bool $required If true, will error if the user doesn't have a Zoom account.
  * @return string
  */
 function zoom_get_user_id($required = true) {
@@ -989,16 +977,16 @@ function zoom_get_unavailability_note($zoom, $finished = null) {
  * Please note: This function does not check if the Zoom user really exists, this has to be checked before calling this function.
  *
  * @param string $zoomhostid The Zoom ID of the host.
- * @param boolean $iswebinar The meeting is a webinar.
+ * @param bool $iswebinar The meeting is a webinar.
  *
- * @return int|boolean The meeting capacity of the Zoom user or false if the user does not have any meeting capacity at all.
+ * @return int|bool The meeting capacity of the Zoom user or false if the user does not have any meeting capacity at all.
  */
 function zoom_get_meeting_capacity(string $zoomhostid, bool $iswebinar = false) {
     // Get Zoom API service instance.
     $service = new mod_zoom_webservice();
 
     // Get the 'feature' section of the user's Zoom settings.
-    $userfeatures = $service->_get_user_settings($zoomhostid)->feature;
+    $userfeatures = $service->get_user_settings($zoomhostid)->feature;
 
     // If this is a webinar.
     if ($iswebinar == true) {
@@ -1186,4 +1174,197 @@ function zoom_get_api_url() {
 
     // Return API URL.
     return $apiurl;
+}
+
+/**
+ * Loads the zoom meeting and passes back a meeting URL
+ * after processing events, view completion, grades, and license updates.
+ *
+ * @param int $id course module id
+ * @param object $context moodle context object
+ * @param bool $usestarturl
+ * @return array $returns contains url object 'nexturl' or string 'error'
+ */
+function zoom_load_meeting($id, $context, $usestarturl = true) {
+    global $CFG, $DB, $USER;
+    require_once($CFG->libdir . '/gradelib.php');
+
+    $cm = get_coursemodule_from_id('zoom', $id, 0, false, MUST_EXIST);
+    $course = get_course($cm->course);
+    $zoom = $DB->get_record('zoom', array('id' => $cm->instance), '*', MUST_EXIST);
+
+    require_login($course, true, $cm);
+
+    require_capability('mod/zoom:view', $context);
+
+    $returns = array('nexturl' => null, 'error' => null);
+
+    list($inprogress, $available, $finished) = zoom_get_state($zoom);
+
+    // If the meeting is not yet available, deny access.
+    if ($available !== true) {
+        // Get unavailability note.
+        $returns['error'] = zoom_get_unavailability_note($zoom, $finished);
+        return $returns;
+    }
+
+    $userisrealhost = (zoom_get_user_id(false) === $zoom->host_id);
+    $alternativehosts = zoom_get_alternative_host_array_from_string($zoom->alternative_hosts);
+    $userishost = ($userisrealhost || in_array(zoom_get_api_identifier($USER), $alternativehosts, true));
+
+    // Check if we should use the start meeting url.
+    if ($userisrealhost && $usestarturl) {
+        // Important: Only the real host can use this URL, because it joins the meeting as the host user.
+        $starturl = zoom_get_start_url($zoom->meeting_id, $zoom->webinar, $zoom->join_url);
+        $returns['nexturl'] = new moodle_url($starturl);
+    } else {
+        $returns['nexturl'] = new moodle_url($zoom->join_url, array('uname' => fullname($USER)));
+    }
+
+    // Record user's clicking join.
+    \mod_zoom\event\join_meeting_button_clicked::create(array(
+        'context' => $context,
+        'objectid' => $zoom->id,
+        'other' => array(
+            'cmid' => $id,
+            'meetingid' => (int) $zoom->meeting_id,
+            'userishost' => $userishost,
+        ),
+    ))->trigger();
+
+    // Track completion viewed.
+    $completion = new completion_info($course);
+    $completion->set_module_viewed($cm);
+
+    // Check whether user has a grade. If not, then assign full credit to them.
+    $gradelist = grade_get_grades($course->id, 'mod', 'zoom', $cm->instance, $USER->id);
+
+    // Assign full credits for user who has no grade yet, if this meeting is gradable (i.e. the grade type is not "None").
+    if (!empty($gradelist->items) && empty($gradelist->items[0]->grades[$USER->id]->grade)) {
+        $grademax = $gradelist->items[0]->grademax;
+        $grades = array(
+            'rawgrade' => $grademax,
+            'userid' => $USER->id,
+            'usermodified' => $USER->id,
+            'dategraded' => '',
+            'feedbackformat' => '',
+            'feedback' => '',
+        );
+
+        zoom_grade_item_update($zoom, $grades);
+    }
+
+    // Upgrade host upon joining meeting, if host is not Licensed.
+    if ($userishost) {
+        $config = get_config('zoom');
+        if (!empty($config->recycleonjoin)) {
+            $service = new mod_zoom_webservice();
+            $service->provide_license($zoom->host_id);
+        }
+    }
+
+    return $returns;
+}
+
+/**
+ * Fetches a fresh URL that can be used to start the Zoom meeting.
+ *
+ * @param string $meetingid Zoom meeting ID.
+ * @param bool $iswebinar If the session is a webinar.
+ * @param string $fallbackurl URL to use if the webservice call fails.
+ * @return string Best available URL for starting the meeting.
+ */
+function zoom_get_start_url($meetingid, $iswebinar, $fallbackurl) {
+    try {
+        $service = new mod_zoom_webservice();
+        $response = $service->get_meeting_webinar_info($meetingid, $iswebinar);
+        return $response->start_url ?? $response->join_url;
+    } catch (moodle_exception $e) {
+        // If an exception was thrown, gracefully use the fallback URL.
+        return $fallbackurl;
+    }
+}
+
+/**
+ * Get the configured Zoom tracking fields.
+ *
+ * @return array tracking fields, keys as lower case
+ */
+function zoom_list_tracking_fields() {
+    // Get Zoom API service instance.
+    $service = new mod_zoom_webservice();
+    $trackingfields = array();
+
+    // Get the tracking fields configured on the account.
+    $response = $service->list_tracking_fields();
+    if ($response != null) {
+        foreach ($response->tracking_fields as $trackingfield) {
+            $field = str_replace(' ', '_', strtolower($trackingfield->field));
+            $trackingfields[$field] = (array) $trackingfield;
+        }
+    }
+
+    return $trackingfields;
+}
+
+/**
+ * Trim and lower case tracking fields.
+ *
+ * @return array tracking fields trimmed, keys as lower case
+ */
+function zoom_clean_tracking_fields() {
+    $config = get_config('zoom');
+    $defaulttrackingfields = explode(',', $config->defaulttrackingfields);
+    $trackingfields = array();
+
+    foreach ($defaulttrackingfields as $key => $defaulttrackingfield) {
+        $trimmed = trim($defaulttrackingfield);
+        if (!empty($trimmed)) {
+            $key = str_replace(' ', '_', strtolower($trimmed));
+            $trackingfields[$key] = $trimmed;
+        }
+    }
+
+    return $trackingfields;
+}
+
+/**
+ * Synchronize tracking field data for a meeting.
+ *
+ * @param int $zoomid Zoom meeting ID
+ * @param array $trackingfields Tracking fields configured in Zoom.
+ */
+function zoom_sync_meeting_tracking_fields($zoomid, $trackingfields) {
+    global $DB;
+
+    $tfvalues = array();
+    foreach ($trackingfields as $trackingfield) {
+        $field = str_replace(' ', '_', strtolower($trackingfield->field));
+        $tfvalues[$field] = $trackingfield->value;
+    }
+
+    $tfrows = $DB->get_records('zoom_meeting_tracking_fields', array('meeting_id' => $zoomid));
+    $tfobjects = array();
+    foreach ($tfrows as $tfrow) {
+        $tfobjects[$tfrow->tracking_field] = $tfrow;
+    }
+    $defaulttrackingfields = zoom_clean_tracking_fields();
+    foreach ($defaulttrackingfields as $key => $defaulttrackingfield) {
+        $value = $tfvalues[$key] ?? '';
+        if (isset($tfobjects[$key])) {
+            $tfobject = $tfobjects[$key];
+            if ($value === '') {
+                $DB->delete_records('zoom_meeting_tracking_fields', array('meeting_id' => $zoomid, 'tracking_field' => $key));
+            } else if ($tfobject->value !== $value) {
+                $tfobject->value = $value;
+                $DB->update_record('zoom_meeting_tracking_fields', $tfobject);
+            }
+        } else if ($value !== '') {
+            $tfobject = new stdClass();
+            $tfobject->meeting_id = $zoomid;
+            $tfobject->tracking_field = $key;
+            $tfobject->value = $value;
+            $DB->insert_record('zoom_meeting_tracking_fields', $tfobject);
+        }
+    }
 }
