@@ -128,9 +128,7 @@ function zoom_add_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
     $zoom->id = $DB->insert_record('zoom', $zoom);
 
     // Store tracking field data for meeting.
-    if (isset($response->tracking_fields)) {
-        zoom_sync_meeting_tracking_fields($zoom->id, $response->tracking_fields);
-    }
+    zoom_sync_meeting_tracking_fields($zoom->id, $response->tracking_fields ?? array());
 
     zoom_calendar_item_update($zoom);
     zoom_grade_item_update($zoom);
@@ -255,9 +253,9 @@ function zoom_update_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
         $response = $service->get_meeting_webinar_info($zoom->meeting_id, $zoom->webinar);
         $zoom = populate_zoom_from_response($zoom, $response);
         // Update tracking field data for meeting.
-        if (isset($response->tracking_fields)) {
-            zoom_sync_meeting_tracking_fields($zoom->id, $response->tracking_fields);
-        }
+        
+        zoom_sync_meeting_tracking_fields($zoom->id, $response->tracking_fields ?? array());
+        
         zoom_calendar_item_update($zoom);
         zoom_grade_item_update($zoom);
 
@@ -423,11 +421,11 @@ function zoom_delete_instance($id) {
     }
 
     // If we delete a meeting instance, do we want to delete the participants?
-    $meetinginstances = $DB->get_records('zoom_meeting_details', array('meeting_id' => $zoom->meeting_id));
+    $meetinginstances = $DB->get_records('zoom_meeting_details', array('zoomid' => $zoom->id));
     foreach ($meetinginstances as $meetinginstance) {
-        $DB->delete_records('zoom_meeting_participants', array('uuid' => $meetinginstance->uuid));
+        $DB->delete_records('zoom_meeting_participants', array('detailsid' => $meetinginstance->id));
     }
-    $DB->delete_records('zoom_meeting_details', array('meeting_id' => $zoom->meeting_id));
+    $DB->delete_records('zoom_meeting_details', array('zoomid' => $zoom->id));
 
     // Delete tracking field data for deleted meetings.
     $DB->delete_records('zoom_meeting_tracking_fields', array('meeting_id' => $zoom->id));
