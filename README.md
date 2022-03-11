@@ -32,6 +32,17 @@ server is properly synchronized with the time servers.
 
 ## Changelog
 
+v4.3.4
+
+- Privacy: Add tests, support recordings, fix existing code #345 (thanks @jwalits, @tuanngocnguyen, @mattporritt, @marcghaly)
+- Compatibility: grunt rebuild for MDL-73915 #364
+
+v4.3.3
+
+- Fix recording table database schema definitions #358 (thanks @jwalits)
+- Compatibility: Moodle upstream upgraded to php-jwt v6.0 #359
+- Renamed primary branch in GitHub to `main` #353
+
 v4.3.2
 
 - Only cache successful Zoom user ID values #350 (thanks @merrill-oakland)
