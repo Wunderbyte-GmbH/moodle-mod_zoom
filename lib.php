@@ -569,7 +569,11 @@ function zoom_populate_calender_item(stdClass $zoom, stdClass $occurrence = null
     $event->type = CALENDAR_EVENT_TYPE_ACTION;
     $event->modulename = 'zoom';
     $event->eventtype = 'zoom';
+    $event->courseid = SITEID;
+    $event->categoryid = 0;
+    /* legacy
     $event->courseid = $zoom->course;
+    */
     $event->instance = $zoom->id;
     $event->visible = true;
     $event->name = $zoom->name;
