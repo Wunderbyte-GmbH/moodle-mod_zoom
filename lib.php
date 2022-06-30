@@ -490,7 +490,7 @@ function zoom_calendar_item_update(stdClass $zoom) {
 
     // Fetch all the events related to this zoom instance.
     $conditions = array(
-        'modulename' => 'zoom',
+        'component' => 'zoom',
         'instance' => $zoom->id,
     );
     $events = $DB->get_records('event', $conditions);
