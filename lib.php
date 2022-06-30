@@ -572,6 +572,11 @@ function zoom_populate_calender_item(stdClass $zoom, stdClass $occurrence = null
     $event->courseid = SITEID;
     $event->categoryid = 0;
     $event->component = 'zoom';
+    $courseurl = new moodle_url('/course/view.php', array('id' => $zoom->course));
+    $zoomurl = new moodle_url('/mod/zoom/view.php?', array('id' => $zoom->id));
+    $event->description ="<a href='" . $courseurl . "'>" . $zoom->name . "</a><br>
+    <a href='" . $zoomurl . "'>" . get_string('gotoactivity', 'core_calendar') . "</a>
+    ";
     /* legacy
     $event->courseid = $zoom->course;
     */
@@ -579,7 +584,7 @@ function zoom_populate_calender_item(stdClass $zoom, stdClass $occurrence = null
     $event->visible = true;
     $event->name = $zoom->name;
     if ($zoom->intro) {
-        $event->description = $zoom->intro;
+        $event->description .= $zoom->intro;
         $event->format = $zoom->introformat;
     }
     if (!$occurrence) {
