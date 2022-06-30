@@ -568,9 +568,10 @@ function zoom_populate_calender_item(stdClass $zoom, stdClass $occurrence = null
     $event = new stdClass();
     $event->type = CALENDAR_EVENT_TYPE_STANDARD;
     $event->modulename = 0;
-    $event->eventtype = 'zoom';
+    $event->eventtype = 'site';
     $event->courseid = SITEID;
     $event->categoryid = 0;
+    $event->component = 'zoom';
     /* legacy
     $event->courseid = $zoom->course;
     */
@@ -611,7 +612,7 @@ function zoom_calendar_item_delete(stdClass $zoom) {
     require_once($CFG->dirroot.'/calendar/lib.php');
 
     $events = $DB->get_records('event', array(
-        'modulename' => 'zoom',
+        'component' => 'zoom',
         'instance' => $zoom->id
     ));
     foreach ($events as $event) {
