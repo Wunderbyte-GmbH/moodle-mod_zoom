@@ -32,6 +32,36 @@ server is properly synchronized with the time servers.
 
 ## Changelog
 
+v4.5.3
+
+- Bugfix: Allow plugin settings to update without a configuration exception #386 (thanks @acquaalta)
+
+v4.5.2
+
+- Regression: Avoid requiring paid accounts for meeting default settings #383 (thanks @nstefanski, @nickchen, @valeriy67, @obook)
+  - Introduced in v3.5 to determine passcode requirements.
+- Bugfix: Allow course restore to complete even when Zoom is not fully configured #378
+- Code quality: Require PHPUnit to pass without warnings #379
+
+v4.5.1
+
+- Regression: Fix Zoom activity icon visibility #375 (thanks @foxlapinou)
+- Compatibility: Fix PHPUnit deprecation warnings #373
+
+v4.5.0
+
+- Feature: Support for Reset course functionality #370 (thanks @izendegi)
+- Compatibility: Improved support for Moodle 4.0 #369
+
+v4.4.0
+
+- Feature: Allow configuration of section visibility on the view page #363 (thanks @aduranterres, @rayjbarrett1)
+  - New settings `zoom/defaultshowschedule`, `zoom/defaultshowsecurity`, `zoom/defaultshowmedia`
+  - New per activity settings `show_schedule`, `show_security`, `show_media`
+- Feature: Allow administrator to set webinar by default (when available) #367 (thanks @marcellobarile)
+  - New setting `zoom/webinardefault`
+- Code quality: specify code coverage for tests #367
+
 v4.3.4
 
 - Privacy: Add tests, support recordings, fix existing code #345 (thanks @jwalits, @tuanngocnguyen, @mattporritt, @marcghaly)

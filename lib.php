@@ -38,6 +38,11 @@
  * @return mixed true if the feature is supported, null if unknown
  */
 function zoom_supports($feature) {
+    // Adding support for FEATURE_MOD_PURPOSE (MDL-71457) and providing backward compatibility (pre-v4.0).
+    if (defined('FEATURE_MOD_PURPOSE') && $feature === FEATURE_MOD_PURPOSE) {
+        return MOD_PURPOSE_COMMUNICATION;
+    }
+
     switch($feature) {
         case FEATURE_BACKUP_MOODLE2:
         case FEATURE_COMPLETION_TRACKS_VIEWS:
@@ -101,6 +106,12 @@ function zoom_add_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
     }
     //End of Added
 
+    $zoom->breakoutrooms = array();
+    if (!empty($zoom->rooms)) {
+        $breakoutrooms = zoom_build_instance_breakout_rooms_array_for_api($zoom);
+        $zoom->breakoutrooms = $breakoutrooms['zoom'];
+    }
+    
     $response = $service->create_meeting($zoom);
     $zoom = populate_zoom_from_response($zoom, $response);
     $zoom->timemodified = time();
@@ -124,6 +135,10 @@ function zoom_add_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
     }
 
     $zoom->id = $DB->insert_record('zoom', $zoom);
+    if (!empty($zoom->breakoutrooms)) {
+        // We ignore the API response and save the local data for breakout rooms to support dynamic users and groups.
+        zoom_insert_instance_breakout_rooms($zoom->id, $breakoutrooms['db']);
+    }
 
     // Store tracking field data for meeting.
     zoom_sync_meeting_tracking_fields($zoom->id, $response->tracking_fields ?? array());
@@ -171,6 +186,13 @@ function zoom_update_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
     }
 
     $DB->update_record('zoom', $zoom);
+
+    $zoom->breakoutrooms = array();
+    if (!empty($zoom->rooms)) {
+        $breakoutrooms = zoom_build_instance_breakout_rooms_array_for_api($zoom);
+        zoom_update_instance_breakout_rooms($zoom->id, $breakoutrooms['db']);
+        $zoom->breakoutrooms = $breakoutrooms['zoom'];
+    }
 
     $updatedzoomrecord = $DB->get_record('zoom', array('id' => $zoom->id));
     $zoom->meeting_id = $updatedzoomrecord->meeting_id;
@@ -433,6 +455,9 @@ function zoom_delete_instance($id) {
     zoom_grade_item_delete($zoom);
 
     $DB->delete_records('zoom', array('id' => $zoom->id));
+
+    // Delete breakout rooms.
+    zoom_delete_instance_breakout_rooms($zoom->id);
 
     return true;
 }
@@ -829,6 +854,91 @@ function zoom_update_grades(stdClass $zoom, $userid = 0) {
     }
 }
 
+
+/**
+ * Removes all zoom grades from gradebook by course id
+ *
+ * @param int $courseid
+ */
+function zoom_reset_gradebook($courseid) {
+    global $DB;
+
+    $params = array($courseid);
+
+    $sql = "SELECT z.*, cm.idnumber as cmidnumber, z.course as courseid
+          FROM {zoom} z
+          JOIN {course_modules} cm ON cm.instance = z.id
+          JOIN {modules} m ON m.id = cm.module AND m.name = 'zoom'
+         WHERE z.course = ?";
+
+    if ($zooms = $DB->get_records_sql($sql, $params)) {
+        foreach ($zooms as $zoom) {
+            zoom_grade_item_update($zoom, 'reset');
+        }
+    }
+}
+
+/**
+ * This function is used by the reset_course_userdata function in moodlelib.
+ * This function will remove all user data from zoom activites
+ * and clean up any related data.
+ *
+ * @param object $data the data submitted from the reset course.
+ * @return array status array
+ */
+function zoom_reset_userdata($data) {
+    global $CFG, $DB;
+
+    $componentstr = get_string('modulenameplural', 'zoom');
+    $status = array();
+
+    // Reset tables that record user data.
+    $DB->delete_records_select('zoom_meeting_participants',
+        'detailsid IN (SELECT zmd.id
+                         FROM {zoom_meeting_details} zmd
+                         JOIN {zoom} z ON z.id = zmd.zoomid
+                        WHERE z.course = ?)', array($data->courseid));
+    $status[] = array(
+        'component' => $componentstr,
+        'item' => get_string('meetingparticipantsdeleted', 'zoom'),
+        'error' => false,
+    );
+
+    $DB->delete_records_select('zoom_meeting_recordings_view',
+        'recordingsid IN (SELECT zmr.id
+                         FROM {zoom_meeting_recordings} zmr
+                         JOIN {zoom} z ON z.id = zmr.zoomid
+                        WHERE z.course = ?)', array($data->courseid));
+    $status[] = array(
+        'component' => $componentstr,
+        'item' => get_string('meetingrecordingviewsdeleted', 'zoom'),
+        'error' => false,
+    );
+
+    return $status;
+}
+
+/**
+ * Called by course/reset.php
+ *
+ * @param object $mform the course reset form that is being built.
+ */
+function zoom_reset_course_form_definition(&$mform) {
+    $mform->addElement('header', 'zoomheader', get_string('modulenameplural', 'zoom'));
+
+    $mform->addElement('checkbox', 'reset_zoom_all', get_string('resetzoomsall', 'zoom'));
+}
+
+/**
+ * Course reset form defaults.
+ *
+ * @param object $course data passed by the form.
+ * @return array the defaults.
+ */
+function zoom_reset_course_form_defaults($course) {
+    return array('reset_zoom_all' => 1);
+}
+
 /* File API */
 
 /**
@@ -1018,35 +1128,267 @@ function mod_zoom_get_fontawesome_icon_map() {
 function mod_zoom_update_tracking_fields() {
     global $DB;
 
-    $defaulttrackingfields = zoom_clean_tracking_fields();
-    $zoomtrackingfields = zoom_list_tracking_fields();
-    $zoomprops = array('id', 'field', 'required', 'visible', 'recommended_values');
-    $confignames = array();
+    try {
+        $defaulttrackingfields = zoom_clean_tracking_fields();
+        $zoomtrackingfields = zoom_list_tracking_fields();
+        $zoomprops = array('id', 'field', 'required', 'visible', 'recommended_values');
+        $confignames = array();
 
-    foreach ($zoomtrackingfields as $field => $zoomtrackingfield) {
-        if (isset($defaulttrackingfields[$field])) {
-            foreach ($zoomprops as $zoomprop) {
-                $configname = 'tf_' . $field . '_' . $zoomprop;
-                $confignames[] = $configname;
-                if ($zoomprop === 'recommended_values') {
-                    $configvalue = implode(', ', $zoomtrackingfield[$zoomprop]);
-                } else {
-                    $configvalue = $zoomtrackingfield[$zoomprop];
+        foreach ($zoomtrackingfields as $field => $zoomtrackingfield) {
+            if (isset($defaulttrackingfields[$field])) {
+                foreach ($zoomprops as $zoomprop) {
+                    $configname = 'tf_' . $field . '_' . $zoomprop;
+                    $confignames[] = $configname;
+                    if ($zoomprop === 'recommended_values') {
+                        $configvalue = implode(', ', $zoomtrackingfield[$zoomprop]);
+                    } else {
+                        $configvalue = $zoomtrackingfield[$zoomprop];
+                    }
+                    set_config($configname, $configvalue, 'zoom');
                 }
-                set_config($configname, $configvalue, 'zoom');
+            }
+        }
+
+        $config = get_config('zoom');
+        $proparray = get_object_vars($config);
+        $properties = array_keys($proparray);
+        $oldconfigs = array_diff($properties, $confignames);
+        $pattern = '/^tf_(?P<oldfield>.*)_(' . implode('|', $zoomprops) . ')$/';
+        foreach ($oldconfigs as $oldconfig) {
+            if (preg_match($pattern, $oldconfig, $matches)) {
+                set_config($oldconfig, null, 'zoom');
+                $DB->delete_records('zoom_meeting_tracking_fields', array('tracking_field' => $matches['oldfield']));
+            }
+        }
+    } catch (Exception $e) {
+        // Fail gracefully because the callback function might be called directly.
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Insert zoom instance breakout rooms
+ *
+ * @param int $zoomid
+ * @param array $breakoutrooms zoom breakout rooms
+ */
+function zoom_insert_instance_breakout_rooms($zoomid, $breakoutrooms) {
+    global $DB;
+
+    foreach ($breakoutrooms as $breakoutroom) {
+        $item = new stdClass();
+        $item->name = $breakoutroom['name'];
+        $item->zoomid  = $zoomid;
+
+        $breakoutroomid = $DB->insert_record('zoom_meeting_breakout_rooms', $item);
+
+        foreach ($breakoutroom['participants'] as $participant) {
+            $item = new stdClass();
+            $item->userid = $participant;
+            $item->breakoutroomid = $breakoutroomid;
+            $DB->insert_record('zoom_breakout_participants', $item);
+        }
+
+        foreach ($breakoutroom['groups'] as $group) {
+            $item = new stdClass();
+            $item->groupid = $group;
+            $item->breakoutroomid = $breakoutroomid;
+            $DB->insert_record('zoom_breakout_groups', $item);
+        }
+    }
+}
+
+/**
+ * Update zoom instance breakout rooms
+ *
+ * @param int $zoomid
+ * @param array $breakoutrooms
+ */
+function zoom_update_instance_breakout_rooms($zoomid, $breakoutrooms) {
+    global $DB;
+
+    zoom_delete_instance_breakout_rooms($zoomid);
+    zoom_insert_instance_breakout_rooms($zoomid, $breakoutrooms);
+}
+
+/**
+ * Delete zoom instance breakout rooms
+ *
+ * @param int $zoomid
+ */
+function zoom_delete_instance_breakout_rooms($zoomid) {
+    global $DB;
+
+    $zoomcurrentbreakoutroomsids = $DB->get_fieldset_select('zoom_meeting_breakout_rooms', 'id', "zoomid = {$zoomid}");
+
+    foreach ($zoomcurrentbreakoutroomsids as $id) {
+        $DB->delete_records('zoom_breakout_participants', array('breakoutroomid' => $id));
+        $DB->delete_records('zoom_breakout_groups', array('breakoutroomid' => $id));
+    }
+
+    $DB->delete_records('zoom_meeting_breakout_rooms', array('zoomid' => $zoomid));
+}
+
+/**
+ * Build zoom instance breakout rooms array for api
+ *
+ * @param stdClass $zoom Submitted data from the form in mod_form.php.
+ * @return array The meeting breakout rooms array.
+ */
+function zoom_build_instance_breakout_rooms_array_for_api($zoom) {
+    $context = context_course::instance($zoom->course);
+    $users = get_enrolled_users($context);
+    $groups = groups_get_all_groups($zoom->course);
+
+    // Building meeting breakout rooms array.
+    $breakoutrooms = array();
+    if (!empty($zoom->rooms)) {
+        foreach ($zoom->rooms as $roomid => $roomname) {
+
+            // Getting meeting rooms participants.
+            $roomparticipants = array();
+            $dbroomparticipants = array();
+            if (!empty($zoom->roomsparticipants[$roomid])) {
+                foreach ($zoom->roomsparticipants[$roomid] as $participantid) {
+                    if (isset($users[$participantid])) {
+                        $roomparticipants[] = $users[$participantid]->email;
+                        $dbroomparticipants[] = $participantid;
+                    }
+                }
+            }
+
+            // Getting meeting rooms groups members.
+            $roomgroupsmembers = array();
+            $dbroomgroupsmembers = array();
+            if (!empty($zoom->roomsgroups[$roomid])) {
+                foreach ($zoom->roomsgroups[$roomid] as $groupid) {
+                    if (isset($groups[$groupid])) {
+                        $groupmembers = groups_get_members($groupid);
+                        $roomgroupsmembers[] = array_column(array_values($groupmembers), 'email');
+                        $dbroomgroupsmembers[] = $groupid;
+                    }
+                }
+                $roomgroupsmembers = array_merge(...$roomgroupsmembers);
+            }
+
+            $zoomdata = array('name' => $roomname,
+                'participants' => array_values(array_unique(array_merge($roomparticipants, $roomgroupsmembers))));
+
+            $dbdata = array('name' => $roomname,
+                'participants' => $dbroomparticipants, 'groups' => $dbroomgroupsmembers);
+
+            $breakoutrooms['zoom'][] = $zoomdata;
+            $breakoutrooms['db'][] = $dbdata;
+        }
+    }
+
+    return $breakoutrooms;
+}
+
+/**
+ * Build zoom instance breakout rooms array for view.
+ *
+ * @param int $zoomid
+ * @param array $courseparticipants
+ * @param array $coursegroups
+ * @return array The meeting breakout rooms array.
+ */
+function zoom_build_instance_breakout_rooms_array_for_view($zoomid, $courseparticipants, $coursegroups) {
+    $breakoutrooms = zoom_get_instance_breakout_rooms($zoomid);
+    $rooms = array();
+
+    if (!empty($breakoutrooms)) {
+        foreach ($breakoutrooms as $key => $breakoutroom) {
+            $roomparticipants = $courseparticipants;
+            if (!empty($breakoutroom['participants'])) {
+                $participants = $breakoutroom['participants'];
+                $roomparticipants = array_map(function($roomparticipant) use ($participants) {
+                    if (isset($participants[$roomparticipant['participantid']])) {
+                        $roomparticipant['selected'] = true;
+                    }
+
+                    return $roomparticipant;
+                }, $courseparticipants);
+            }
+
+            $roomgroups = $coursegroups;
+            if (!empty($breakoutroom['groups'])) {
+                $groups = $breakoutroom['groups'];
+                $roomgroups = array_map(function($roomgroup) use ($groups) {
+                    if (isset($groups[$roomgroup['groupid']])) {
+                        $roomgroup['selected'] = true;
+                    }
+
+                    return $roomgroup;
+                }, $coursegroups);
+            }
+
+            $rooms[] = array('roomid' => $breakoutroom['roomid'], 'roomname' => $breakoutroom['roomname'],
+                'courseparticipants' => $roomparticipants, 'coursegroups' => $roomgroups);
+        }
+
+        $rooms[0]['roomactive'] = true;
+    }
+
+    return $rooms;
+}
+
+/**
+ * Get zoom instance breakout rooms.
+ *
+ * @param int $zoomid
+ * @return array
+ */
+function zoom_get_instance_breakout_rooms($zoomid) {
+    global $DB;
+
+    $breakoutrooms = array();
+    $params = array($zoomid);
+
+    $sql = "SELECT id, name
+        FROM {zoom_meeting_breakout_rooms}
+        WHERE zoomid = ?";
+
+    $rooms = $DB->get_records_sql($sql, $params);
+
+    foreach ($rooms as $room) {
+        $breakoutrooms[$room->id] = array(
+            'roomid' => $room->id,
+            'roomname' => $room->name,
+            'participants' => array(),
+            'groups' => array(),
+        );
+
+        // Get breakout room participants.
+        $params = array($room->id);
+        $sql = "SELECT userid
+        FROM {zoom_breakout_participants}
+        WHERE breakoutroomid = ?";
+
+        $participants = $DB->get_records_sql($sql, $params);
+
+        if (!empty($participants)) {
+            foreach ($participants as $participant) {
+                $breakoutrooms[$room->id]['participants'][$participant->userid] = $participant->userid;
+            }
+        }
+
+        // Get breakout room groups.
+        $sql = "SELECT groupid
+        FROM {zoom_breakout_groups}
+        WHERE breakoutroomid = ?";
+
+        $groups = $DB->get_records_sql($sql, $params);
+
+        if (!empty($groups)) {
+            foreach ($groups as $group) {
+                $breakoutrooms[$room->id]['groups'][$group->groupid] = $group->groupid;
             }
         }
     }
 
-    $config = get_config('zoom');
-    $proparray = get_object_vars($config);
-    $properties = array_keys($proparray);
-    $oldconfigs = array_diff($properties, $confignames);
-    $pattern = '/^tf_(?P<oldfield>.*)_(' . implode('|', $zoomprops) . ')$/';
-    foreach ($oldconfigs as $oldconfig) {
-        if (preg_match($pattern, $oldconfig, $matches)) {
-            set_config($oldconfig, null, 'zoom');
-            $DB->delete_records('zoom_meeting_tracking_fields', array('tracking_field' => $matches['oldfield']));
-        }
-    }
+    return $breakoutrooms;
 }
+
