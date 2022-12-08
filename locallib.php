@@ -106,6 +106,10 @@ define('ZOOM_AUTORECORDING_NONE', 'none');
 define('ZOOM_AUTORECORDING_USERDEFAULT', 'userdefault');
 define('ZOOM_AUTORECORDING_LOCAL', 'local');
 define('ZOOM_AUTORECORDING_CLOUD', 'cloud');
+// Registration options.
+define('ZOOM_REGISTRATION_AUTOMATIC', 0);
+define('ZOOM_REGISTRATION_MANUAL', 1);
+define('ZOOM_REGISTRATION_OFF', 2);
 
 //Added for Creating New Users
 define('ZOOM_USER_DOMAIN', 'uregina.ca');
@@ -486,9 +490,8 @@ function zoom_get_user_id($required = true) {
     $cache = cache::make('mod_zoom', 'zoomid');
     if (!($zoomuserid = $cache->get($USER->id))) {
         $zoomuserid = false;
-        $service = new mod_zoom_webservice();
         try {
-            $zoomuser = $service->get_user(zoom_get_api_identifier($USER));
+            $zoomuser = zoom_get_user(zoom_get_api_identifier($USER));
             if ($zoomuser !== false && isset($zoomuser->id) && ($zoomuser->id !== false)) {
                 $zoomuserid = $zoomuser->id;
                 $cache->set($USER->id, $zoomuserid);
@@ -549,18 +552,15 @@ function zoom_get_user_zoomemail($user,$service) {
 /**
  * Get the Zoom meeting security settings, including meeting password requirements of the user's master account.
  *
+ * @param string|int $identifier The user's email or the user's ID per Zoom API.
  * @return stdClass
  */
-function zoom_get_meeting_security_settings() {
+function zoom_get_meeting_security_settings($identifier) {
     $cache = cache::make('mod_zoom', 'zoommeetingsecurity');
-    if (!($zoommeetingsecurity = $cache->get('meetingsecurity'))) {
-        $service = new mod_zoom_webservice();
-        try {
-            $zoommeetingsecurity = $service->get_account_meeting_security_settings();
-        } catch (moodle_exception $error) {
-            throw $error;
-        }
-        $cache->set('meetingsecurity', $zoommeetingsecurity);
+    $zoommeetingsecurity = $cache->get($identifier);
+    if (empty($zoommeetingsecurity)) {
+        $zoommeetingsecurity = zoom_webservice()->get_account_meeting_security_settings($identifier);
+        $cache->set($identifier, $zoommeetingsecurity);
     }
 
     return $zoommeetingsecurity;
@@ -678,20 +678,6 @@ function zoom_get_user_info($email){
 	
     return $user;
 }
-
-/**
-* Get user from db *this forces that all alternative hosts must be in moodle instance
-* @param int $email of user
-* @param user object
-*/
-function zoom_get_user($id){
-
-    global $DB;
-
-    $user = $DB->get_record('user', array('id' => $id), '*', MUST_EXIST);
-    return $user;
-}
-
 
 //Added for account creation checks
 /**
@@ -836,9 +822,6 @@ function zoom_get_selectable_alternative_hosts_list(context $context) {
     // Create array of users.
     $selectablealternativehosts = array();
 
-    // Create Zoom API instance.
-    $service = new mod_zoom_webservice();
-
     // Iterate over selectable alternative host users.
     foreach ($users as $u) {
         // Note: Basically, if this is the user's own data row, the data row should be skipped.
@@ -851,7 +834,7 @@ function zoom_get_selectable_alternative_hosts_list(context $context) {
         // Verify that the user really has a Zoom account.
         // Furthermore, verify that the user's status is active. Adding a pending or inactive user as alternative host will result
         // in a Zoom API error otherwise.
-        $zoomuser = $service->get_user($u->email);
+        $zoomuser = zoom_get_user($u->email);
         if ($zoomuser !== false && $zoomuser->status === 'active') {
             // Add user to array of users.
             $selectablealternativehosts[$u->email] = fullname($u);
@@ -985,11 +968,8 @@ function zoom_get_unavailability_note($zoom, $finished = null) {
  * @return int|bool The meeting capacity of the Zoom user or false if the user does not have any meeting capacity at all.
  */
 function zoom_get_meeting_capacity(string $zoomhostid, bool $iswebinar = false) {
-    // Get Zoom API service instance.
-    $service = new mod_zoom_webservice();
-
     // Get the 'feature' section of the user's Zoom settings.
-    $userfeatures = $service->get_user_settings($zoomhostid)->feature;
+    $userfeatures = zoom_get_user_settings($zoomhostid)->feature;
 
     $meetingcapacity = false;
 
@@ -1197,6 +1177,18 @@ function zoom_load_meeting($id, $context, $usestarturl = true) {
 
     list($inprogress, $available, $finished) = zoom_get_state($zoom);
 
+    $userisregistered = false;
+    if ($zoom->registration != ZOOM_REGISTRATION_OFF) {
+        // Check if user already registered.
+        $registrantjoinurl = zoom_get_registrant_join_url($USER->email, $zoom->meeting_id, $zoom->webinar);
+        $userisregistered = !empty($registrantjoinurl);
+
+        // Allow unregistered users to register.
+        if (!$userisregistered) {
+            $available = true;
+        }
+    }
+
     // If the meeting is not yet available, deny access.
     if ($available !== true) {
         // Get unavailability note.
@@ -1214,7 +1206,11 @@ function zoom_load_meeting($id, $context, $usestarturl = true) {
         $starturl = zoom_get_start_url($zoom->meeting_id, $zoom->webinar, $zoom->join_url);
         $returns['nexturl'] = new moodle_url($starturl);
     } else {
-        $returns['nexturl'] = new moodle_url($zoom->join_url, array('uname' => fullname($USER)));
+        $url = $zoom->join_url;
+        if ($userisregistered) {
+            $url = $registrantjoinurl;
+        }
+        $returns['nexturl'] = new moodle_url($url, array('uname' => fullname($USER)));
     }
 
     // Record user's clicking join.
@@ -1254,8 +1250,7 @@ function zoom_load_meeting($id, $context, $usestarturl = true) {
     if ($userishost) {
         $config = get_config('zoom');
         if (!empty($config->recycleonjoin)) {
-            $service = new mod_zoom_webservice();
-            $service->provide_license($zoom->host_id);
+            zoom_webservice()->provide_license($zoom->host_id);
         }
     }
 
@@ -1272,8 +1267,7 @@ function zoom_load_meeting($id, $context, $usestarturl = true) {
  */
 function zoom_get_start_url($meetingid, $iswebinar, $fallbackurl) {
     try {
-        $service = new mod_zoom_webservice();
-        $response = $service->get_meeting_webinar_info($meetingid, $iswebinar);
+        $response = zoom_webservice()->get_meeting_webinar_info($meetingid, $iswebinar);
         return $response->start_url ?? $response->join_url;
     } catch (moodle_exception $e) {
         // If an exception was thrown, gracefully use the fallback URL.
@@ -1287,12 +1281,10 @@ function zoom_get_start_url($meetingid, $iswebinar, $fallbackurl) {
  * @return array tracking fields, keys as lower case
  */
 function zoom_list_tracking_fields() {
-    // Get Zoom API service instance.
-    $service = new mod_zoom_webservice();
     $trackingfields = array();
 
     // Get the tracking fields configured on the account.
-    $response = $service->list_tracking_fields();
+    $response = zoom_webservice()->list_tracking_fields();
     if (isset($response->tracking_fields)) {
         foreach ($response->tracking_fields as $trackingfield) {
             $field = str_replace(' ', '_', strtolower($trackingfield->field));
@@ -1421,4 +1413,96 @@ function zoom_get_meeting_recordings_grouped($zoomid) {
         $recordings[$recording->meetinguuid][] = $recording;
     }
     return $recordings;
+}
+
+/**
+ * Singleton for Zoom webservice class.
+ *
+ * @return \mod_zoom_webservice
+ */
+function zoom_webservice() {
+    static $service;
+
+    if (empty($service)) {
+        $service = new mod_zoom_webservice();
+    }
+
+    return $service;
+}
+
+/**
+ * Helper to get a Zoom user, efficiently.
+ *
+ * @param string|int $identifier The user's email or the user's ID per Zoom API.
+ * @return stdClass|false If user is found, returns a Zoom user object. Otherwise, returns false.
+ */
+function zoom_get_user($identifier) {
+    static $users = array();
+
+    if (!isset($users[$identifier])) {
+        $users[$identifier] = zoom_webservice()->get_user($identifier);
+    }
+
+    return $users[$identifier];
+}
+
+/**
+ * Helper to get Zoom user settings, efficiently.
+ *
+ * @param string|int $identifier The user's email or the user's ID per Zoom API.
+ * @return stdClass|false If user is found, returns a Zoom user object. Otherwise, returns false.
+ */
+function zoom_get_user_settings($identifier) {
+    static $settings = array();
+
+    if (!isset($settings[$identifier])) {
+        $settings[$identifier] = zoom_webservice()->get_user_settings($identifier);
+    }
+
+    return $settings[$identifier];
+}
+
+/**
+ * Get the zoom meeting registrants.
+ *
+ * @param string $meetingid Zoom meeting ID.
+ * @param bool $iswebinar If the session is a webinar.
+ * @return stdClass Returns a Zoom object containing the registrants (if found).
+ */
+function zoom_get_meeting_registrants($meetingid, $iswebinar) {
+    $response = zoom_webservice()->get_meeting_registrants($meetingid, $iswebinar);
+    return $response;
+}
+
+/**
+ * Checks if a user has registered for a meeting/webinar based on their email address.
+ *
+ * @param string $useremail The email address of a user used to determine if they registered or not.
+ * @param string $meetingid Zoom meeting ID.
+ * @param bool $iswebinar If the session is a webinar.
+ * @return bool Returns whether or not the user has registered for the zoom meeting/webinar based on their email address.
+ */
+function zoom_is_user_registered_for_meeting($useremail, $meetingid, $iswebinar) {
+    $registrantjoinurl = zoom_get_registrant_join_url($useremail, $meetingid, $iswebinar);
+    return !empty($registrantjoinurl);
+}
+
+/**
+ * Get the join url for a user for the specified meeting/webinar.
+ *
+ * @param string $useremail The email address of a user used to determine if they registered or not.
+ * @param string $meetingid Zoom meeting ID.
+ * @param bool $iswebinar If the session is a webinar.
+ * @return string|false Returns the join url for the user (based on email address) for the specified meeting (if found).
+ */
+function zoom_get_registrant_join_url($useremail, $meetingid, $iswebinar) {
+    $response = zoom_get_meeting_registrants($meetingid, $iswebinar);
+    if (isset($response->registrants)) {
+        foreach ($response->registrants as $registrant) {
+            if (strcasecmp($useremail, $registrant->email) == 0) {
+                return $registrant->join_url;
+            }
+        }
+    }
+    return false;
 }

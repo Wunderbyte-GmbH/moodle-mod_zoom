@@ -28,8 +28,6 @@ require_once($CFG->dirroot.'/mod/zoom/locallib.php');
 require_once($CFG->libdir . '/environmentlib.php');
 
 if ($ADMIN->fulltree) {
-    require_once($CFG->dirroot.'/mod/zoom/locallib.php');
-    require_once($CFG->dirroot.'/mod/zoom/classes/webservice.php');
     require_once($CFG->dirroot . '/mod/zoom/classes/invitation.php');
 
     $moodlehashideif = version_compare(normalize_version($CFG->release), '3.7.0', '>=');
@@ -42,8 +40,7 @@ if ($ADMIN->fulltree) {
         $notifyclass = 'notifysuccess';
         $errormessage = '';
         try {
-            $service = new mod_zoom_webservice();
-            $service->get_user(zoom_get_api_identifier($USER));
+            zoom_get_user(zoom_get_api_identifier($USER));
         } catch (moodle_exception $error) {
             $notifyclass = 'notifyproblem';
             $status = 'connectionfailed';
@@ -59,6 +56,18 @@ if ($ADMIN->fulltree) {
     $settings->add(new admin_setting_heading('zoom/connectionsettings',
             get_string('connectionsettings', 'mod_zoom'),
             get_string('connectionsettings_desc', 'mod_zoom')));
+
+    $accountid = new admin_setting_configtext('zoom/accountid', get_string('accountid', 'mod_zoom'),
+            get_string('accountid_desc', 'mod_zoom'), '', PARAM_ALPHANUMEXT);
+    $settings->add($accountid);
+
+    $clientid = new admin_setting_configtext('zoom/clientid', get_string('clientid', 'mod_zoom'),
+            get_string('clientid_desc', 'mod_zoom'), '', PARAM_ALPHANUMEXT);
+    $settings->add($clientid);
+
+    $clientsecret = new admin_setting_configpasswordunmask('zoom/clientsecret', get_string('clientsecret', 'mod_zoom'),
+            get_string('clientsecret_desc', 'mod_zoom'), '');
+    $settings->add($clientsecret);
 
     $apikey = new admin_setting_configtext('zoom/apikey', get_string('apikey', 'mod_zoom'),
             get_string('apikey_desc', 'mod_zoom'), '', PARAM_ALPHANUMEXT);
@@ -247,6 +256,11 @@ if ($ADMIN->fulltree) {
             get_string('showschedule', 'mod_zoom'),
             get_string('showschedule_help', 'mod_zoom'), 1, 1, 0);
     $settings->add($defaultshowschedule);
+
+    $defaultregistration = new admin_setting_configcheckbox('zoom/defaultregistration',
+            get_string('registration', 'mod_zoom'),
+            get_string('registration_help', 'mod_zoom'), ZOOM_REGISTRATION_OFF, ZOOM_REGISTRATION_AUTOMATIC, ZOOM_REGISTRATION_OFF);
+    $settings->add($defaultregistration);
 
     $defaultrequirepasscode = new admin_setting_configcheckbox('zoom/requirepasscode',
             get_string('requirepasscode', 'mod_zoom'),

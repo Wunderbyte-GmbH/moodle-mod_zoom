@@ -69,8 +69,7 @@ function zoom_supports($feature) {
  */
 function zoom_add_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
     global $CFG, $DB;
-    require_once($CFG->dirroot.'/mod/zoom/classes/webservice.php');
-    $service = new mod_zoom_webservice();
+    require_once($CFG->dirroot . '/mod/zoom/locallib.php');
 
     if (defined('PHPUNIT_TEST') && PHPUNIT_TEST) {
         $zoom->id = $DB->insert_record('zoom', $zoom);
@@ -94,11 +93,9 @@ function zoom_add_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
 
     $zoom->course = (int) $zoom->course;
 
-    $service = new mod_zoom_webservice();
-
     //Added for assign
     if(isset($zoom->assign)){
-        $newhost = $service->get_user($zoom->assign);
+        $newhost = zoom_webservice()->get_user($zoom->assign);
         //check if hostid matches selected host
         if($zoom->host_id != $newhost->id){
             $zoom->host_id= $newhost->id;
@@ -111,8 +108,8 @@ function zoom_add_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
         $breakoutrooms = zoom_build_instance_breakout_rooms_array_for_api($zoom);
         $zoom->breakoutrooms = $breakoutrooms['zoom'];
     }
-    
-    $response = $service->create_meeting($zoom);
+
+    $response = zoom_webservice()->create_meeting($zoom);
     $zoom = populate_zoom_from_response($zoom, $response);
     $zoom->timemodified = time();
     if (!empty($zoom->schedule_for)) {
@@ -120,7 +117,7 @@ function zoom_add_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
         // based on the schedule_for field. Zoom handles the schedule for on their
         // end, but returns the host as the person who created the meeting, not the person
         // that it was scheduled for.
-        $correcthostzoomuser = $service->get_user($zoom->schedule_for);
+        $correcthostzoomuser = zoom_get_user($zoom->schedule_for);
         $zoom->host_id = $correcthostzoomuser->id;
     }
 
@@ -128,7 +125,7 @@ function zoom_add_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
         // Recurring meetings did not create any occurrencces.
         // This means invalid options selected.
         // Need to rollback created meeting.
-        $service->delete_meeting($zoom->meeting_id, $zoom->webinar);
+        zoom_webservice()->delete_meeting($zoom->meeting_id, $zoom->webinar);
 
         $redirecturl = new moodle_url('/course/view.php', ['id' => $zoom->course]);
         throw new moodle_exception('erroraddinstance', 'zoom', $redirecturl->out());
@@ -161,8 +158,7 @@ function zoom_add_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
  */
 function zoom_update_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
     global $CFG, $DB;
-    require_once($CFG->dirroot.'/mod/zoom/classes/webservice.php');
-    $service = new mod_zoom_webservice();
+    require_once($CFG->dirroot . '/mod/zoom/locallib.php');
 
     // The object received from mod_form.php returns instance instead of id for some reason.
     if (isset($zoom->instance)) {
@@ -197,12 +193,11 @@ function zoom_update_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
     $updatedzoomrecord = $DB->get_record('zoom', array('id' => $zoom->id));
     $zoom->meeting_id = $updatedzoomrecord->meeting_id;
     $zoom->webinar = $updatedzoomrecord->webinar;
-    $service = new mod_zoom_webservice();
 
     $changehost = FALSE;
     //Added for assign
     if(isset($zoom->assign)){
-        $newhost = $service->get_user($zoom->assign);
+        $newhost = zoom_webservice()->get_user($zoom->assign);
         //check if hostid matches selected host
         if($zoom->host_id != $newhost->id){
             $zoom->host_id= $newhost->id;
@@ -224,7 +219,7 @@ function zoom_update_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
 
         if ($ogzoom->exists_on_zoom) {
             try {
-                $service->delete_meeting($ogzoom->meeting_id, $ogzoom->webinar);
+                zoom_webservice()->delete_meeting($ogzoom->meeting_id, $ogzoom->webinar);
             } catch (moodle_exception $error) {
                 if (strpos($error, 'is not found or has expired') === false) {
                     throw $error;
@@ -232,7 +227,7 @@ function zoom_update_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
             }
         }
         //Create new meeting with updated info
-        $response = $service->create_meeting($zoom);
+        $response = zoom_webservice()->create_meeting($zoom);
         $zoom = populate_zoom_from_response($zoom, $response);
 
         $zoom->id = $oldid;
@@ -257,10 +252,10 @@ function zoom_update_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
 
         // Update meeting on Zoom.
         try {
-            $service->update_meeting($zoom);
+            zoom_webservice()->update_meeting($zoom);
             if (!empty($zoom->schedule_for)) {
                 // Only update this if we actually get a valid user.
-                if ($correcthostzoomuser = $service->get_user($zoom->schedule_for)) {
+                if ($correcthostzoomuser = zoom_webservice()->get_user($zoom->schedule_for)) {
                     $zoom->host_id = $correcthostzoomuser->id;
                     $DB->update_record('zoom', $zoom);
                 }
@@ -270,7 +265,7 @@ function zoom_update_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
         }
 
         // Get the updated meeting info from zoom, before updating calendar events.
-        $response = $service->get_meeting_webinar_info($zoom->meeting_id, $zoom->webinar);
+        $response = zoom_webservice()->get_meeting_webinar_info($zoom->meeting_id, $zoom->webinar);
         $zoom = populate_zoom_from_response($zoom, $response);
         // Update tracking field data for meeting.
         
@@ -343,7 +338,7 @@ function zoom_remove_monthly_options($data) {
 function populate_zoom_from_response(stdClass $zoom, stdClass $response) {
     global $CFG;
     // Inlcuded for constants.
-    require_once($CFG->dirroot.'/mod/zoom/locallib.php');
+    require_once($CFG->dirroot . '/mod/zoom/locallib.php');
 
     $newzoom = clone $zoom;
 
@@ -419,21 +414,17 @@ function populate_zoom_from_response(stdClass $zoom, stdClass $response) {
  */
 function zoom_delete_instance($id) {
     global $CFG, $DB;
-    require_once($CFG->dirroot.'/mod/zoom/classes/webservice.php');
+    require_once($CFG->dirroot . '/mod/zoom/locallib.php');
 
     if (!$zoom = $DB->get_record('zoom', array('id' => $id))) {
         // For some reason already deleted, so let Moodle take care of the rest.
         return true;
     }
 
-    // Include locallib.php for constants.
-    require_once($CFG->dirroot.'/mod/zoom/locallib.php');
-
     // If the meeting is missing from zoom, don't bother with the webservice.
     if ($zoom->exists_on_zoom == ZOOM_MEETING_EXISTS) {
-        $service = new mod_zoom_webservice();
         try {
-            $service->delete_meeting($zoom->meeting_id, $zoom->webinar);
+            zoom_webservice()->delete_meeting($zoom->meeting_id, $zoom->webinar);
         } catch (zoom_not_found_exception $error) {
             // Meeting not on Zoom, so continue.
             mtrace('Meeting not on Zoom; continuing');
@@ -478,19 +469,17 @@ function zoom_delete_instance($id) {
 function zoom_refresh_events($courseid, $zoom, $cm) {
     global $CFG;
 
-    require_once($CFG->dirroot . '/mod/zoom/classes/webservice.php');
+    require_once($CFG->dirroot . '/mod/zoom/locallib.php');
 
     try {
-        $service = new mod_zoom_webservice();
-
         // Get the updated meeting info from zoom, before updating calendar events.
-        $response = $service->get_meeting_webinar_info($zoom->meeting_id, $zoom->webinar);
+        $response = zoom_webservice()->get_meeting_webinar_info($zoom->meeting_id, $zoom->webinar);
         $fullzoom = populate_zoom_from_response($zoom, $response);
 
         // Only if the name has changed, update meeting on Zoom.
         if ($zoom->name !== $fullzoom->name) {
             $fullzoom->name = $zoom->name;
-            $service->update_meeting($zoom);
+            zoom_webservice()->update_meeting($zoom);
         }
 
         zoom_calendar_item_update($fullzoom);
@@ -1133,21 +1122,23 @@ function mod_zoom_update_tracking_fields() {
 
     try {
         $defaulttrackingfields = zoom_clean_tracking_fields();
-        $zoomtrackingfields = zoom_list_tracking_fields();
         $zoomprops = array('id', 'field', 'required', 'visible', 'recommended_values');
         $confignames = array();
 
-        foreach ($zoomtrackingfields as $field => $zoomtrackingfield) {
-            if (isset($defaulttrackingfields[$field])) {
-                foreach ($zoomprops as $zoomprop) {
-                    $configname = 'tf_' . $field . '_' . $zoomprop;
-                    $confignames[] = $configname;
-                    if ($zoomprop === 'recommended_values') {
-                        $configvalue = implode(', ', $zoomtrackingfield[$zoomprop]);
-                    } else {
-                        $configvalue = $zoomtrackingfield[$zoomprop];
+        if (!empty($defaulttrackingfields)) {
+            $zoomtrackingfields = zoom_list_tracking_fields();
+            foreach ($zoomtrackingfields as $field => $zoomtrackingfield) {
+                if (isset($defaulttrackingfields[$field])) {
+                    foreach ($zoomprops as $zoomprop) {
+                        $configname = 'tf_' . $field . '_' . $zoomprop;
+                        $confignames[] = $configname;
+                        if ($zoomprop === 'recommended_values') {
+                            $configvalue = implode(', ', $zoomtrackingfield[$zoomprop]);
+                        } else {
+                            $configvalue = $zoomtrackingfield[$zoomprop];
+                        }
+                        set_config($configname, $configvalue, 'zoom');
                     }
-                    set_config($configname, $configvalue, 'zoom');
                 }
             }
         }
