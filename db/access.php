@@ -68,16 +68,16 @@ $capabilities = [
             'teacher' => CAP_ALLOW,
             'editingteacher' => CAP_ALLOW,
             'manager' => CAP_ALLOW
-        )
-    ),
-    'mod/zoom:assign' => array(
+				]
+    ],
+    'mod/zoom:assign' => [
         'captype' => 'write',
         'contextlevel' => CONTEXT_MODULE,
-        'archetypes' => array(
+        'archetypes' => [
             'editingteacher' => CAP_ALLOW,
             'manager' => CAP_ALLOW
-        )
-    ),
+				]
+    ],
 
     'mod/zoom:refreshsessions' => [
         'riskbitmask' => RISK_XSS,
