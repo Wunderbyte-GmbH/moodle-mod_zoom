@@ -24,40 +24,24 @@
 
 defined('MOODLE_INTERNAL') || die();
 
-require_once($CFG->dirroot.'/mod/zoom/locallib.php');
-require_once($CFG->dirroot.'/lib/filelib.php');
-
-// Some plugins already might include this library, like mod_bigbluebuttonbn.
-// Hacky, but need to create list of plugins that might have JWT library.
-// NOTE: Remove file_exists checks and the JWT library in mod when versions prior to Moodle 3.7 is no longer supported.
-if (!class_exists('Firebase\JWT\JWT')) {
-    if (file_exists($CFG->dirroot.'/lib/php-jwt/src/JWT.php')) {
-        require_once($CFG->dirroot.'/lib/php-jwt/src/JWT.php');
-    } else {
-        if (file_exists($CFG->dirroot.'/mod/bigbluebuttonbn/vendor/firebase/php-jwt/src/JWT.php')) {
-            require_once($CFG->dirroot.'/mod/bigbluebuttonbn/vendor/firebase/php-jwt/src/JWT.php');
-        } else {
-            require_once($CFG->dirroot.'/mod/zoom/jwt/JWT.php');
-        }
-    }
-}
+require_once($CFG->dirroot . '/mod/zoom/locallib.php');
+require_once($CFG->libdir . '/filelib.php');
 
 /**
  * Web service class.
  */
 class mod_zoom_webservice {
-
     /**
      * API calls: maximum number of retries.
      * @var int
      */
-    const MAX_RETRIES = 5;
+    public const MAX_RETRIES = 5;
 
     /**
      * Default meeting_password_requirement object.
      * @var array
      */
-    const DEFAULT_MEETING_PASSWORD_REQUIREMENT = [
+    public const DEFAULT_MEETING_PASSWORD_REQUIREMENT = [
         'length' => 0,
         'consecutive_characters_length' => 0,
         'have_letter' => false,
@@ -85,18 +69,6 @@ class mod_zoom_webservice {
      * @var string
      */
     protected $accountid;
-
-    /**
-     * API key
-     * @var string
-     */
-    protected $apikey;
-
-    /**
-     * API secret
-     * @var string
-     */
-    protected $apisecret;
 
     /**
      * API base URL.
@@ -147,14 +119,6 @@ class mod_zoom_webservice {
             'accountid',
         ];
 
-        // TODO: Remove when JWT is no longer supported in June 2023.
-        if (empty($config->clientid) || empty($config->clientsecret) || empty($config->accountid)) {
-            $requiredfields = [
-                'apikey',
-                'apisecret',
-            ];
-        }
-
         try {
             // Get and remember each required field.
             foreach ($requiredfields as $requiredfield) {
@@ -173,6 +137,7 @@ class mod_zoom_webservice {
                 $this->recyclelicenses = $config->utmost;
                 $this->instanceusers = !empty($config->instanceusers);
             }
+
             if ($this->recyclelicenses) {
                 if (!empty($config->licensesnumber)) {
                     $this->numlicenses = $config->licensesnumber;
@@ -205,7 +170,42 @@ class mod_zoom_webservice {
      * @return curl The curl object used to make the API calls
      */
     protected function get_curl_object() {
-        return new curl();
+        global $CFG;
+
+        $proxyhost = get_config('zoom', 'proxyhost');
+
+        if (!empty($proxyhost)) {
+            $cfg = new stdClass();
+            $cfg->proxyhost = $CFG->proxyhost;
+            $cfg->proxyport = $CFG->proxyport;
+            $cfg->proxyuser = $CFG->proxyuser;
+            $cfg->proxypassword = $CFG->proxypassword;
+            $cfg->proxytype = $CFG->proxytype;
+
+            // Parse string as host:port, delimited by a colon (:).
+            list($host, $port) = explode(':', $proxyhost);
+
+            // Temporarily set new values on the global $CFG.
+            $CFG->proxyhost = $host;
+            $CFG->proxyport = $port;
+            $CFG->proxytype = 'HTTP';
+            $CFG->proxyuser = '';
+            $CFG->proxypassword = '';
+        }
+
+        // Create $curl, which implicitly uses the proxy settings from $CFG.
+        $curl = new curl();
+
+        if (!empty($proxyhost)) {
+            // Restore the stored global proxy settings from above.
+            $CFG->proxyhost = $cfg->proxyhost;
+            $CFG->proxyport = $cfg->proxyport;
+            $CFG->proxyuser = $cfg->proxyuser;
+            $CFG->proxypassword = $cfg->proxypassword;
+            $CFG->proxytype = $cfg->proxytype;
+        }
+
+        return $curl;
     }
 
     /**
@@ -218,47 +218,12 @@ class mod_zoom_webservice {
      * @throws moodle_exception Moodle exception is thrown for curl errors.
      */
     private function make_call($path, $data = [], $method = 'get') {
-        global $CFG;
         $url = $this->apiurl . $path;
         $method = strtolower($method);
-        $proxyhost = get_config('zoom', 'proxyhost');
-        $cfg = new stdClass();
-        if (!empty($proxyhost)) {
-            $cfg->proxyhost = $CFG->proxyhost;
-            $cfg->proxyport = $CFG->proxyport;
-            $cfg->proxyuser = $CFG->proxyuser;
-            $cfg->proxypassword = $CFG->proxypassword;
-            $cfg->proxytype = $CFG->proxytype;
-            // Parse string as host:port, delimited by a colon (:).
-            list($host, $port) = explode(':', $proxyhost);
-            // Temporarily set new values on the global $CFG.
-            $CFG->proxyhost = $host;
-            $CFG->proxyport = $port;
-            $CFG->proxytype = 'HTTP';
-            $CFG->proxyuser = '';
-            $CFG->proxypassword = '';
-        }
-        $curl = $this->get_curl_object(); // Create $curl, which implicitly uses the proxy settings from $CFG.
-        if (!empty($proxyhost)) {
-            // Restore the stored global proxy settings from above.
-            $CFG->proxyhost = $cfg->proxyhost;
-            $CFG->proxyport = $cfg->proxyport;
-            $CFG->proxyuser = $cfg->proxyuser;
-            $CFG->proxypassword = $cfg->proxypassword;
-            $CFG->proxytype = $cfg->proxytype;
-        }
 
-        // TODO: Remove JWT auth when deprecated in June 2023.
-        if (isset($this->clientid) && isset($this->clientsecret) && isset($this->accountid)) {
-            $token = $this->get_access_token();
-        } else {
-            $payload = [
-                'iss' => $this->apikey,
-                'exp' => time() + 40,
-            ];
-            $token = \Firebase\JWT\JWT::encode($payload, $this->apisecret, 'HS256');
-        }
+        $token = $this->get_access_token();
 
+        $curl = $this->get_curl_object();
         $curl->setHeader('Authorization: Bearer ' . $token);
         $curl->setHeader('Accept: application/json');
 
@@ -266,7 +231,17 @@ class mod_zoom_webservice {
             $curl->setHeader('Content-Type: application/json');
             $data = is_array($data) ? json_encode($data) : $data;
         }
-        $rawresponse = $this->make_curl_call($curl, $method, $url, $data);
+
+        $attempts = 0;
+        do {
+            if ($attempts > 0) {
+                sleep(1);
+                debugging('retrying after curl error 35, retry attempt ' . $attempts);
+            }
+
+            $rawresponse = $this->make_curl_call($curl, $method, $url, $data);
+            $attempts++;
+        } while ($curl->get_errno() === 35 && $attempts <= self::MAX_RETRIES);
 
         if ($curl->get_errno()) {
             throw new moodle_exception('errorwebservice', 'mod_zoom', '', $curl->error);
@@ -286,13 +261,16 @@ class mod_zoom_webservice {
                         }
                     }
                     throw new zoom_bad_request_exception($response->message . $errorstring, $response->code);
+
                 case 404:
                     throw new zoom_not_found_exception($response->message, $response->code);
+
                 case 429:
                     $this->makecallretries += 1;
                     if ($this->makecallretries > self::MAX_RETRIES) {
                         throw new zoom_api_retry_failed_exception($response->message, $response->code);
                     }
+
                     $header = $curl->getResponse();
                     // Header can have mixed case, normalize it.
                     $header = array_change_key_case($header, CASE_LOWER);
@@ -325,17 +303,23 @@ class mod_zoom_webservice {
                         sleep($timediff);
                     }
                     return $this->make_call($path, $data, $method);
+
                 default:
                     if ($response) {
-                        $exception = new moodle_exception('errorwebservice', 'mod_zoom', '', $response->message);
-                        $exception->response = $response->message;
-                        $exception->zoomerrorcode = $response->code;
-                        throw $exception;
+                        throw new \mod_zoom\webservice_exception(
+                            $response->message,
+                            $response->code,
+                            'errorwebservice',
+                            'mod_zoom',
+                            '',
+                            $response->message
+                        );
                     } else {
                         throw new moodle_exception('errorwebservice', 'mod_zoom', '', "HTTP Status $httpstatus");
                     }
             }
         }
+
         $this->makecallretries = 0;
 
         return $response;
@@ -417,6 +401,7 @@ class mod_zoom_webservice {
         if (empty(self::$userslist)) {
             self::$userslist = $this->make_paginated_call('users', null, 'users');
         }
+
         return self::$userslist;
     }
 
@@ -441,6 +426,7 @@ class mod_zoom_webservice {
                 }
             }
         }
+
         return false;
     }
 
@@ -495,7 +481,7 @@ class mod_zoom_webservice {
             // Only available for Paid account, return default settings.
             $meetingsecurity = new stdClass();
             // If some other error, show debug message.
-            if ($error->zoomerrorcode != 200) {
+            if (isset($error->zoomerrorcode) && $error->zoomerrorcode != 200) {
                 debugging($error->getMessage());
             }
         }
@@ -527,7 +513,7 @@ class mod_zoom_webservice {
 
         try {
             $founduser = $this->make_call($url);
-        } catch (moodle_exception $error) {
+        } catch (\mod_zoom\webservice_exception $error) {
             if (zoom_is_user_not_found_error($error)) {
                 return false;
             } else {
@@ -555,6 +541,7 @@ class mod_zoom_webservice {
             if (is_array($response->schedulers)) {
                 $schedulerswithoutkey = $response->schedulers;
             }
+
             foreach ($schedulerswithoutkey as $s) {
                 $schedulers[$s->id] = $s;
             }
@@ -562,6 +549,7 @@ class mod_zoom_webservice {
             // We don't care if this throws an exception.
             $schedulers = [];
         }
+
         return $schedulers;
     }
 
@@ -587,23 +575,29 @@ class mod_zoom_webservice {
         if (isset($zoom->intro)) {
             $data['agenda'] = content_to_text($zoom->intro, FORMAT_MOODLE);
         }
+
         if (isset($CFG->timezone) && !empty($CFG->timezone)) {
             $data['timezone'] = $CFG->timezone;
         } else {
             $data['timezone'] = date_default_timezone_get();
         }
+
         if (isset($zoom->password)) {
             $data['password'] = $zoom->password;
         }
+
         if (isset($zoom->schedule_for)) {
             $data['schedule_for'] = $zoom->schedule_for;
         }
+
         if (isset($zoom->alternative_hosts)) {
             $data['settings']['alternative_hosts'] = $zoom->alternative_hosts;
         }
+
         if (isset($zoom->option_authenticated_users)) {
             $data['settings']['meeting_authentication'] = (bool) $zoom->option_authenticated_users;
         }
+
         if (isset($zoom->registration)) {
             $data['settings']['approval_type'] = $zoom->registration;
         }
@@ -641,6 +635,7 @@ class mod_zoom_webservice {
                 } else {
                     $zoomuserid = zoom_get_user_id();
                 }
+
                 $autorecording = zoom_get_user_settings($zoomuserid)->recording->auto_recording;
                 $data['settings']['auto_recording'] = $autorecording;
             } else {
@@ -666,6 +661,7 @@ class mod_zoom_webservice {
             if ($zoom->recurrence_type == ZOOM_RECURRINGTYPE_WEEKLY) {
                 $data['recurrence']['weekly_days'] = $zoom->weekly_days;
             }
+
             if ($zoom->recurrence_type == ZOOM_RECURRINGTYPE_MONTHLY) {
                 if ($zoom->monthly_repeat_option == ZOOM_MONTHLY_REPEAT_OPTION_DAY) {
                     $data['recurrence']['monthly_day'] = (int) $zoom->monthly_day;
@@ -674,6 +670,7 @@ class mod_zoom_webservice {
                     $data['recurrence']['monthly_week_day'] = (int) $zoom->monthly_week_day;
                 }
             }
+
             if ($zoom->end_date_option == ZOOM_END_DATE_OPTION_AFTER) {
                 $data['recurrence']['end_times'] = (int) $zoom->end_times;
             } else {
@@ -701,6 +698,7 @@ class mod_zoom_webservice {
                 $tfarray[] = $tf;
             }
         }
+
         $data['tracking_fields'] = $tfarray;
 
         if (isset($zoom->breakoutrooms)) {
@@ -725,6 +723,7 @@ class mod_zoom_webservice {
                 // Changes least_recently_active_user to a basic user so we can use their license.
                 $this->make_call("users/$leastrecentlyactivepaiduserid", ['type' => ZOOM_USER_TYPE_BASIC], 'patch');
             }
+
             // Changes current user to pro so they can make a meeting.
             $this->make_call("users/$zoomuserid", ['type' => ZOOM_USER_TYPE_PRO], 'patch');
         }
@@ -848,6 +847,7 @@ class mod_zoom_webservice {
         if ($zoom->webinar) {
             return new \mod_zoom\invitation(null);
         }
+
         $url = 'meetings/' . $zoom->meeting_id . '/invitation';
         try {
             $response = $this->make_call($url);
@@ -855,6 +855,7 @@ class mod_zoom_webservice {
             debugging($error->getMessage());
             return new \mod_zoom\invitation(null);
         }
+
         return new \mod_zoom\invitation($response->invitation);
     }
 
@@ -913,6 +914,7 @@ class mod_zoom_webservice {
         foreach ($users as $user) {
             $uuids[] = $user->id;
         }
+
         return $uuids;
     }
 
@@ -967,6 +969,7 @@ class mod_zoom_webservice {
         } catch (moodle_exception $error) {
             debugging($error->getMessage());
         }
+
         return $response;
     }
 
@@ -1026,12 +1029,14 @@ class mod_zoom_webservice {
                         $recordings[strtotime($rec->recording_start)][] = $recordinginfo;
                     }
                 }
+
                 ksort($recordings);
             }
         } catch (moodle_exception $error) {
             // No recordings found for this meeting id.
             $recordings = [];
         }
+
         return $recordings;
     }
 
@@ -1048,6 +1053,7 @@ class mod_zoom_webservice {
         if (empty($token) || empty($expires) || time() >= $expires) {
             $token = $this->oauth($cache);
         }
+
         return $token;
     }
 
@@ -1061,7 +1067,7 @@ class mod_zoom_webservice {
     private function oauth($cache) {
         $curl = $this->get_curl_object();
         $curl->setHeader('Authorization: Basic ' . base64_encode($this->clientid . ':' . $this->clientsecret));
-        $curl->setHeader('Content-Type: application/json');
+        $curl->setHeader('Accept: application/json');
 
         // Force HTTP/1.1 to avoid HTTP/2 "stream not closed" issue.
         $curl->setopt([
@@ -1069,29 +1075,50 @@ class mod_zoom_webservice {
         ]);
 
         $timecalled = time();
-        $response = $this->make_curl_call($curl, 'post',
-            'https://zoom.us/oauth/token?grant_type=account_credentials&account_id=' . $this->accountid, []);
+        $data = [
+            'grant_type' => 'account_credentials',
+            'account_id' => $this->accountid,
+        ];
+        $response = $this->make_curl_call($curl, 'post', 'https://zoom.us/oauth/token', $data);
 
         if ($curl->get_errno()) {
             throw new moodle_exception('errorwebservice', 'mod_zoom', '', $curl->error);
         }
 
         $response = json_decode($response);
-        if (isset($response->access_token)) {
-            $token = $response->access_token;
-            $cache->set('accesstoken', $token);
 
-            if (isset($response->expires_in)) {
-                $expires = $response->expires_in + $timecalled;
-            } else {
-                $expires = 3599 + $timecalled;
-            }
-            $cache->set('expires', $expires);
-
-            return $token;
-        } else {
-            throw new moodle_exception('errorwebservice', 'mod_zoom', '', get_string('zoomerr_no_access_token', 'zoom'));
+        if (empty($response->access_token)) {
+            throw new moodle_exception('errorwebservice', 'mod_zoom', '', get_string('zoomerr_no_access_token', 'mod_zoom'));
         }
+
+        $requiredscopes = [
+            'meeting:read:admin',
+            'meeting:write:admin',
+            'user:read:admin',
+        ];
+        $scopes = explode(' ', $response->scope);
+        $missingscopes = array_diff($requiredscopes, $scopes);
+
+        if (!empty($missingscopes)) {
+            $missingscopes = implode(', ', $missingscopes);
+            throw new moodle_exception('errorwebservice', 'mod_zoom', '', get_string('zoomerr_scopes', 'mod_zoom', $missingscopes));
+        }
+
+        $token = $response->access_token;
+
+        if (isset($response->expires_in)) {
+            $expires = $response->expires_in + $timecalled;
+        } else {
+            $expires = 3599 + $timecalled;
+        }
+
+        $cache->set_many([
+            'accesstoken' => $token,
+            'expires' => $expires,
+            'scopes' => $scopes,
+        ]);
+
+        return $token;
     }
 
     /**

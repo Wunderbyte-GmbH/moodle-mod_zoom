@@ -28,8 +28,9 @@
 defined('MOODLE_INTERNAL') || die();
 
 global $CFG;
-require_once($CFG->dirroot.'/mod/zoom/lib.php');
-require_once($CFG->dirroot.'/mod/zoom/classes/webservice.php');
+require_once($CFG->dirroot . '/mod/zoom/lib.php');
+require_once($CFG->dirroot . '/mod/zoom/classes/webservice_exception.php');
+require_once($CFG->dirroot . '/mod/zoom/classes/webservice.php');
 
 // Constants.
 // Audio options.
@@ -119,82 +120,52 @@ define('ZOOM_MEETING_EXPIRED','ZOOM_MEETING_EXPIRED');
 /**
  * Entry not found on Zoom.
  */
-class zoom_not_found_exception extends moodle_exception {
-    /**
-     * Web service response.
-     * @var string
-     */
-    public $response = null;
-
+class zoom_not_found_exception extends \mod_zoom\webservice_exception {
     /**
      * Constructor
      * @param string $response      Web service response message
      * @param int $errorcode     Web service response error code
      */
     public function __construct($response, $errorcode) {
-        $this->response = $response;
-        $this->zoomerrorcode = $errorcode;
-        parent::__construct('errorwebservice_notfound', 'zoom');
+        parent::__construct($response, $errorcode, 'errorwebservice_notfound', 'mod_zoom');
     }
 }
 
 /**
  * Bad request received by Zoom.
  */
-class zoom_bad_request_exception extends moodle_exception {
-    /**
-     * Web service response.
-     * @var string
-     */
-    public $response = null;
-
+class zoom_bad_request_exception extends \mod_zoom\webservice_exception {
     /**
      * Constructor
      * @param string $response      Web service response message
      * @param int $errorcode     Web service response error code
      */
     public function __construct($response, $errorcode) {
-        $this->response = $response;
-        $this->zoomerrorcode = $errorcode;
-        parent::__construct('errorwebservice_badrequest', 'zoom', '', $response);
+        parent::__construct($response, $errorcode, 'errorwebservice_badrequest', 'mod_zoom', '', $response);
     }
 }
 
 /**
  * Couldn't succeed within the allowed number of retries.
  */
-class zoom_api_retry_failed_exception extends moodle_exception {
-    /**
-     * Web service response.
-     * @var string
-     */
-    public $response = null;
-
+class zoom_api_retry_failed_exception extends \mod_zoom\webservice_exception {
     /**
      * Constructor
      * @param string $response      Web service response
      * @param int $errorcode     Web service response error code
      */
     public function __construct($response, $errorcode) {
-        $this->response = $response;
-        $this->zoomerrorcode = $errorcode;
         $a = new stdClass();
         $a->response = $response;
         $a->maxretries = mod_zoom_webservice::MAX_RETRIES;
-        parent::__construct('zoomerr_maxretries', 'zoom', '', $a);
+        parent::__construct($response, $errorcode, 'zoomerr_maxretries', 'mod_zoom', '', $a);
     }
 }
 
 /**
  * Exceeded daily API limit.
  */
-class zoom_api_limit_exception extends moodle_exception {
-    /**
-     * Web service response.
-     * @var string
-     */
-    public $response = null;
-
+class zoom_api_limit_exception extends \mod_zoom\webservice_exception {
     /**
      * Unix timestamp of next time to API can be called.
      * @var int
@@ -208,12 +179,11 @@ class zoom_api_limit_exception extends moodle_exception {
      * @param int $retryafter   Unix timestamp of next time to API can be called.
      */
     public function __construct($response, $errorcode, $retryafter) {
-        $this->response = $response;
-        $this->zoomerrorcode = $errorcode;
         $this->retryafter = $retryafter;
+
         $a = new stdClass();
         $a->response = $response;
-        parent::__construct('zoomerr_apilimit', 'zoom', '',
+        parent::__construct($response, $errorcode, 'zoomerr_apilimit', 'mod_zoom', '',
                 userdate($retryafter, get_string('strftimedaydatetime', 'core_langconfig')));
     }
 }
@@ -233,7 +203,7 @@ class zoom_api_limit_exception extends moodle_exception {
  *                             the site index page.
  * @param mixed $a Extra words and phrases that might be required in the error string
  */
-function zoom_fatal_error($errorcode, $module='', $continuelink='', $a=null) {
+function zoom_fatal_error($errorcode, $module = '', $continuelink = '', $a = null) {
     global $CFG, $COURSE, $OUTPUT, $PAGE;
 
     $output = '';
@@ -259,13 +229,15 @@ function zoom_fatal_error($errorcode, $module='', $continuelink='', $a=null) {
         if (!empty($debuginfo)) {
             $debuginfo = s($debuginfo); // Removes all nasty JS.
             $debuginfo = str_replace("\n", '<br />', $debuginfo); // Keep newlines.
-            $output .= $OUTPUT->notification('<strong>Debug info:</strong> '.$debuginfo, 'notifytiny');
+            $output .= $OUTPUT->notification('<strong>Debug info:</strong> ' . $debuginfo, 'notifytiny');
         }
+
         if (!empty($backtrace)) {
-            $output .= $OUTPUT->notification('<strong>Stack trace:</strong> '.format_backtrace($backtrace), 'notifytiny');
+            $output .= $OUTPUT->notification('<strong>Stack trace:</strong> ' . format_backtrace($backtrace), 'notifytiny');
         }
-        if ($obbuffer !== '' ) {
-            $output .= $OUTPUT->notification('<strong>Output buffer:</strong> '.s($obbuffer), 'notifytiny');
+
+        if ($obbuffer !== '') {
+            $output .= $OUTPUT->notification('<strong>Output buffer:</strong> ' . s($obbuffer), 'notifytiny');
         }
     }
 
@@ -321,8 +293,9 @@ function zoom_get_instance_setup() {
  * @return array information about the meeting
  */
 function zoom_get_sessions_for_display($zoomid) {
-    require_once(__DIR__.'/../../lib/moodlelib.php');
-    global $DB;
+    global $DB, $CFG;
+
+    require_once($CFG->libdir . '/moodlelib.php');
 
     $sessions = [];
     $format = get_string('strftimedatetimeshort', 'langconfig');
@@ -346,6 +319,7 @@ function zoom_get_sessions_for_display($zoomid) {
                     $uniquevalues[$participant->uuid] = true;
                 }
             }
+
             if ($participant->userid != null) {
                 if (!$unique || !array_key_exists($participant->userid, $uniquevalues)) {
                     $uniquevalues[$participant->userid] = true;
@@ -353,6 +327,7 @@ function zoom_get_sessions_for_display($zoomid) {
                     $unique = false;
                 }
             }
+
             if ($participant->user_email != null) {
                 if (!$unique || !array_key_exists($participant->user_email, $uniquevalues)) {
                     $uniquevalues[$participant->user_email] = true;
@@ -360,6 +335,7 @@ function zoom_get_sessions_for_display($zoomid) {
                     $unique = false;
                 }
             }
+
             $uniqueparticipantcount += $unique ? 1 : 0;
         }
 
@@ -369,6 +345,7 @@ function zoom_get_sessions_for_display($zoomid) {
         $sessions[$uuid]['starttime'] = userdate($instance->start_time, $format);
         $sessions[$uuid]['endtime'] = userdate($instance->start_time + $instance->duration * 60, $format);
     }
+
     return $sessions;
 }
 
@@ -875,7 +852,7 @@ function zoom_get_users_from_alternativehosts(array $alternativehosts) {
     list($insql, $inparams) = $DB->get_in_or_equal($alternativehosts);
     $sql = 'SELECT *
             FROM {user}
-            WHERE email '.$insql.'
+            WHERE email ' . $insql . '
             ORDER BY lastname ASC';
     $alternativehostusers = $DB->get_records_sql($sql, $inparams);
 
@@ -897,7 +874,7 @@ function zoom_get_nonusers_from_alternativehosts(array $alternativehosts) {
     list($insql, $inparams) = $DB->get_in_or_equal($alternativehosts);
     $sql = 'SELECT email
             FROM {user}
-            WHERE email '.$insql.'
+            WHERE email ' . $insql . '
             ORDER BY email ASC';
     $alternativehostusersmails = $DB->get_records_sql($sql, $inparams);
     foreach ($alternativehosts as $ah) {
@@ -1011,7 +988,7 @@ function zoom_get_eligible_meeting_participants(context $context) {
     // Compose SQL query.
     $sqlsnippets = get_enrolled_with_capabilities_join($context, '', 'mod/zoom:view', 0, true);
     $sql = 'SELECT count(DISTINCT u.id)
-            FROM {user} u '.$sqlsnippets->joins.' WHERE '.$sqlsnippets->wheres;
+            FROM {user} u ' . $sqlsnippets->joins . ' WHERE ' . $sqlsnippets->wheres;
 
     // Run query and count records.
     $eligibleparticipantcount = $DB->count_records_sql($sql, $sqlsnippets->params);
@@ -1092,6 +1069,7 @@ function zoom_get_api_identifier($user) {
         // If one of the custom user fields.
         $identifier = $user->profile[$field];
     }
+
     if (empty($identifier)) {
         // Fallback to email if the field is not set.
         $identifier = $user->email;
@@ -1116,7 +1094,7 @@ function zoom_helper_icalendar_event($event, $description) {
     $hostaddress = str_replace('https://', '', $hostaddress);
     $uid = $event->id . '@' . $hostaddress;
 
-    $icalevent = new iCalendar_event;
+    $icalevent = new iCalendar_event();
     $icalevent->add_property('uid', $uid); // A unique identifier.
     $icalevent->add_property('summary', $event->name); // Title.
     $icalevent->add_property('dtstamp', Bennu::timestamp_to_datetime()); // Time of creation.
@@ -1178,6 +1156,7 @@ function zoom_load_meeting($id, $context, $usestarturl = true) {
     list($inprogress, $available, $finished) = zoom_get_state($zoom);
 
     $userisregistered = false;
+    $userisregistering = false;
     if ($zoom->registration != ZOOM_REGISTRATION_OFF) {
         // Check if user already registered.
         $registrantjoinurl = zoom_get_registrant_join_url($USER->email, $zoom->meeting_id, $zoom->webinar);
@@ -1185,12 +1164,12 @@ function zoom_load_meeting($id, $context, $usestarturl = true) {
 
         // Allow unregistered users to register.
         if (!$userisregistered) {
-            $available = true;
+            $userisregistering = true;
         }
     }
 
     // If the meeting is not yet available, deny access.
-    if ($available !== true) {
+    if (!$available && !$userisregistering) {
         // Get unavailability note.
         $returns['error'] = zoom_get_unavailability_note($zoom, $finished);
         return $returns;
@@ -1210,7 +1189,13 @@ function zoom_load_meeting($id, $context, $usestarturl = true) {
         if ($userisregistered) {
             $url = $registrantjoinurl;
         }
+
         $returns['nexturl'] = new moodle_url($url, ['uname' => fullname($USER)]);
+    }
+
+    // If the user is pre-registering, skip grading/completion.
+    if (!$available && $userisregistering) {
+        return $returns;
     }
 
     // Record user's clicking join.
@@ -1336,6 +1321,7 @@ function zoom_sync_meeting_tracking_fields($zoomid, $trackingfields) {
     foreach ($tfrows as $tfrow) {
         $tfobjects[$tfrow->tracking_field] = $tfrow;
     }
+
     $defaulttrackingfields = zoom_clean_tracking_fields();
     foreach ($defaulttrackingfields as $key => $defaulttrackingfield) {
         $value = $tfvalues[$key] ?? '';
@@ -1389,11 +1375,13 @@ function zoom_get_meeting_recordings($zoomid = null) {
     if ($zoomid !== null) {
         $params['zoomid'] = $zoomid;
     }
+
     $records = $DB->get_records('zoom_meeting_recordings', $params);
     $recordings = [];
     foreach ($records as $recording) {
         $recordings[$recording->zoomrecordingid] = $recording;
     }
+
     return $recordings;
 }
 
@@ -1411,11 +1399,13 @@ function zoom_get_meeting_recordings_grouped($zoomid = null) {
     if ($zoomid !== null) {
         $params['zoomid'] = $zoomid;
     }
+
     $records = $DB->get_records('zoom_meeting_recordings', $params, 'recordingstart ASC');
     $recordings = [];
     foreach ($records as $recording) {
         $recordings[$recording->meetinguuid][$recording->zoomrecordingid] = $recording;
     }
+
     return $recordings;
 }
 
@@ -1508,5 +1498,6 @@ function zoom_get_registrant_join_url($useremail, $meetingid, $iswebinar) {
             }
         }
     }
+
     return false;
 }

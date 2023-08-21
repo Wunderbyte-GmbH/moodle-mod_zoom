@@ -26,7 +26,7 @@ namespace mod_zoom;
 
 use advanced_testcase;
 use mod_zoom_webservice;
-use moodle_exception;
+use mod_zoom\webservice_exception;
 use zoom_api_retry_failed_exception;
 
 /**
@@ -34,7 +34,6 @@ use zoom_api_retry_failed_exception;
  * @covers \mod_zoom_webservice
  */
 class mod_zoom_webservice_test extends advanced_testcase {
-
     /**
      * Setup to ensure that fixtures are loaded.
      */
@@ -52,9 +51,6 @@ class mod_zoom_webservice_test extends advanced_testcase {
         set_config('clientid', 'test', 'zoom');
         set_config('clientsecret', 'test', 'zoom');
         set_config('accountid', 'test', 'zoom');
-        // TODO: Remove with JWT deprecation June 2023.
-        set_config('apikey', 'test', 'zoom');
-        set_config('apisecret', 'test', 'zoom');
 
         $this->notfoundmockcurl = new class {
             // @codingStandardsIgnoreStart
@@ -125,11 +121,12 @@ class mod_zoom_webservice_test extends advanced_testcase {
         $foundexception = false;
         try {
             $response = $mockservice->get_meeting_webinar_info('-1', false);
-        } catch (moodle_exception $error) {
+        } catch (webservice_exception $error) {
             $this->assertEquals(3001, $error->zoomerrorcode);
             $this->assertTrue(zoom_is_meeting_gone_error($error));
             $foundexception = true;
         }
+
         $this->assertTrue($foundexception);
     }
 
@@ -156,12 +153,13 @@ class mod_zoom_webservice_test extends advanced_testcase {
         $foundexception = false;
         try {
             $founduser = $mockservice->get_user('-1');
-        } catch (moodle_exception $error) {
+        } catch (webservice_exception $error) {
             $this->assertEquals(1001, $error->zoomerrorcode);
             $this->assertTrue(zoom_is_meeting_gone_error($error));
             $this->assertTrue(zoom_is_user_not_found_error($error));
             $foundexception = true;
         }
+
         $this->assertTrue($foundexception || !$founduser);
     }
 
@@ -215,12 +213,13 @@ class mod_zoom_webservice_test extends advanced_testcase {
         $foundexception = false;
         try {
             $founduser = $mockservice->get_user('-1');
-        } catch (moodle_exception $error) {
+        } catch (webservice_exception $error) {
             $this->assertEquals(1120, $error->zoomerrorcode);
             $this->assertTrue(zoom_is_meeting_gone_error($error));
             $this->assertTrue(zoom_is_user_not_found_error($error));
             $foundexception = true;
         }
+
         $this->assertTrue($foundexception || !$founduser);
     }
 
@@ -257,6 +256,7 @@ class mod_zoom_webservice_test extends advanced_testcase {
                 if ($this->numgetinfocalls <= 3) {
                     return ['http_code' => 429];
                 }
+
                 return ['http_code' => 200];
             }
             // @codingStandardsIgnoreStart
@@ -333,6 +333,7 @@ class mod_zoom_webservice_test extends advanced_testcase {
                 if ($this->numgetinfocalls <= 3) {
                     return ['http_code' => 429];
                 }
+
                 return ['http_code' => 200];
             }
             // @codingStandardsIgnoreStart
@@ -447,6 +448,7 @@ class mod_zoom_webservice_test extends advanced_testcase {
             $foundexception = true;
             $this->assertEquals($error->response, 'too many retries');
         }
+
         $this->assertTrue($foundexception);
         // Check that we retried MAX_RETRIES times.
         $this->assertDebuggingCalledCount(mod_zoom_webservice::MAX_RETRIES);
@@ -456,7 +458,6 @@ class mod_zoom_webservice_test extends advanced_testcase {
      * Tests that we are waiting 1 minute for QPS rate limit types.
      */
     public function test_retryqps_exception() {
-
         $retryqpsmockcurl = new class {
             public $urlpath = null;
             // @codingStandardsIgnoreStart
@@ -496,6 +497,7 @@ class mod_zoom_webservice_test extends advanced_testcase {
                     // We should be getting the same path every time.
                     return '{"code":-1, "message":"incorrect url"}';
                 }
+
                 return '{"code":-1, "message":"too many retries"}';
             }
             // @codingStandardsIgnoreStart
@@ -525,10 +527,11 @@ class mod_zoom_webservice_test extends advanced_testcase {
         $foundexception = false;
         try {
             $result = $mockservice->get_meetings('2020-01-01', '2020-01-02');
-        } catch (moodle_exception $error) {
+        } catch (webservice_exception $error) {
             $foundexception = true;
             $this->assertEquals($error->response, 'too many retries');
         }
+
         $this->assertTrue($foundexception);
 
         // Check that we waited 1 minute.
