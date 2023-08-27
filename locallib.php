@@ -115,7 +115,7 @@ define('ZOOM_REGISTRATION_OFF', 2);
 //Added for Creating New Users
 define('ZOOM_USER_DOMAIN', 'uregina.ca');
 
-define('ZOOM_MEETING_EXPIRED','ZOOM_MEETING_EXPIRED');
+//define('ZOOM_MEETING_EXPIRED','ZOOM_MEETING_EXPIRED');
 
 /**
  * Entry not found on Zoom.
