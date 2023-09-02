@@ -1040,6 +1040,55 @@ class mod_zoom_webservice {
         return $recordings;
     }
 
+    //uofr hack dapiawej -- august 29-2023 Adapting server to server oauth access token function for import Zoom Recordings
+    public function get_user_recording_list($zoomMails,$datefrom,$dateto) {
+        $meetingid = $this->encode_uuid($zoomMails);
+        $url = 'users/' . $zoomMails . '/recordings';
+        $settingsurl = 'users/' . $zoomMails . '/recordings/?page_size=30&mc=false&trash=false&from='.$datefrom."&to=".$dateto;
+        $allowedrecordingtypes = ['MP4', 'M4A'];
+        $recordings = new stdClass();
+        try {
+            //$response = $this->make_call($url);
+            $response = $this->make_call($settingsurl);
+          
+                foreach ($response as $rec) {
+                    if (!empty($rec)){
+              
+                        $recordings = $rec;
+                    }
+                }
+            
+        } catch (moodle_exception $error) {
+            // No recordings found for this meeting id.
+            $recordings = [];
+        }
+        return $recordings;
+    }
+   //uofr hack dapiawej -- august 29-2023 Adapting server to server oauth access token function for import Zoom Recordings
+    public function get_user_meeting_recording($meeting_id) {
+        $meetingid = $this->encode_uuid($meeting_id);
+        $url = 'meetings/' . $meeting_id . '/recordings';
+        $settingsurl = 'meetings/' . $meeting_id . '/recordings/settings';
+        
+        $recordings = new stdClass();
+        try {
+            //$response = $this->make_call($url);
+            $response = $this->make_call($settingsurl);
+               
+                foreach ($response as $rec) {
+                    if (!empty($rec)){
+                        $rec->viewer_download = true;
+                        $recordings = $rec;
+                    }
+                }
+          
+        } catch (moodle_exception $error) {
+            // No recordings found for this meeting id.
+            $recordings = [];
+        }
+        return $recordings;
+    }
+
     /**
      * Returns a server to server oauth access token, good for 1 hour.
      *
