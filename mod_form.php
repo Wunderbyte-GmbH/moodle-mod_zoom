@@ -49,7 +49,12 @@ class mod_zoom_mod_form extends moodleform_mod {
         global $PAGE, $USER, $OUTPUT;
 
         // We don't do anything custom with completion data, so avoid doing any unnecessary work.
-        if ($PAGE->pagetype === 'course-editbulkcompletion' || $PAGE->pagetype === 'course-editdefaultcompletion') {
+        $completionpagetypes = [
+            'course-defaultcompletion' => 'Edit completion default settings (Moodle >= 4.3)',
+            'course-editbulkcompletion' => 'Edit completion settings in bulk for a single course',
+            'course-editdefaultcompletion' => 'Edit completion default settings (Moodle < 4.3)',
+        ];
+        if (isset($completionpagetypes[$PAGE->pagetype])) {
             return;
         }
 
@@ -445,7 +450,10 @@ class mod_zoom_mod_form extends moodleform_mod {
         // Getting Course participants.
         $courseparticipants = [];
         foreach ($participants as $participant) {
-            $courseparticipants[] = ['participantid' => $participant->id, 'participantemail' => $participant->email];
+            $courseparticipants[] = [
+                'participantid' => $participant->id,
+                'participantname' => fullname($participant) . ' <' . $participant->email . '>',
+            ];
         }
 
         // Getting Course groups.
