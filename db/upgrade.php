@@ -938,6 +938,9 @@ function xmldb_zoom_upgrade($oldversion) {
         $table = new xmldb_table('zoom');
         $field = new xmldb_field('registration', XMLDB_TYPE_INTEGER, '1', null, XMLDB_NOTNULL, null, '2', 'option_auto_recording');
 
+        // Set any null values to the new default: 2.
+        $DB->set_field_select('zoom', 'registration', '2', 'registration IS NULL');
+
         // Launch change of nullability for field registration.
         $dbman->change_field_notnull($table, $field);
 
@@ -946,6 +949,20 @@ function xmldb_zoom_upgrade($oldversion) {
 
         // Zoom savepoint reached.
         upgrade_mod_savepoint(true, 2024012500, 'zoom');
+    }
+
+    if ($oldversion < 2024030100) {
+        // Define field grading_method to be added to zoom.
+        $table = new xmldb_table('zoom');
+        $field = new xmldb_field('grading_method', XMLDB_TYPE_CHAR, '10', null, null, null, null, 'grade');
+
+        // Conditionally launch add field grading_method.
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        // Zoom savepoint reached.
+        upgrade_mod_savepoint(true, 2024030100, 'zoom');
     }
 
     return true;
