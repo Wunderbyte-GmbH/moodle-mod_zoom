@@ -233,8 +233,7 @@ function zoom_get_sessions_for_display($zoomid) {
     $sessions = [];
     $format = get_string('strftimedatetimeshort', 'langconfig');
 
-    // Sort sessions in start_time ascending order.
-    $instances = $DB->get_records('zoom_meeting_details', ['zoomid' => $zoomid], 'start_time');
+    $instances = $DB->get_records('zoom_meeting_details', ['zoomid' => $zoomid]);
 
     foreach ($instances as $instance) {
         // The meeting uuid, not the participant's uuid.
@@ -417,25 +416,33 @@ function zoom_get_user_id($required = true) {
     return $zoomuserid;
 }
 
-function zoom_get_user_zoomemail($user,$service) {
+/**
+ * Joel Dapiawen
+ * February 18, 2024
+ * Updated this function to be called again in modform.php to try other methods to login the user.
+ */
+function zoom_get_user_zoomemail($user) {
 
     $config = get_config('mod_zoom');
 	
 	$emailchk = explode('@',$user->email);
-	
+
+
 	if (strpos($emailchk[0],'.')===false) {
 		$zoom_email = strtolower($user->firstname.'.'.$user->lastname.'@'.ZOOM_USER_DOMAIN);
+      
 	} else {
 		$zoom_email = strtolower($user->email);
+      // error_log(print_r($zoom_email));
 	}
 	
 	//try user with first.last@ZOOM_USER_DOMAIN
-    $zoomuser = $service->get_user($zoom_email);
-	
+    $zoomuser =  zoom_webservice()->get_user($zoom_email);
+	//print_r($zoomuser);
 	if ($zoomuser === false) {
 		//try titlcase
 		$zoom_email = ucfirst($user->firstname).'.'.ucfirst($user->lastname).'@'.ZOOM_USER_DOMAIN;
-		$zoomuser = $service->get_user($zoom_email);
+		$zoomuser = zoom_webservice()->get_user($zoom_email);
 	}
 	
     if ($zoomuser === false) {
@@ -444,11 +451,11 @@ function zoom_get_user_zoomemail($user,$service) {
         $alias = zoom_email_alias($user);
 
         //check if alias emails are connected to zoom account
-        $zoomuser = $service->get_user(strtolower($alias));
+        $zoomuser =  zoom_webservice()->get_user(strtolower($alias));
 
         if ($zoomuser === false) {
 			//check the actual email field, just in case it works
-			$zoomuser = $service->get_user(strtolower($user->email));
+			$zoomuser =  zoom_webservice()->get_user(strtolower($user->email));
 			
 			if ($zoomuser === false) {
 				return false;
@@ -552,12 +559,25 @@ function zoom_get_course_instructors($courseid) {
     global $DB;
 
     $role = $DB->get_record('role', array('shortname' => 'editingteacher'));
-    $context = context_course::instance($courseid);
-    $teachers = get_role_users($role->id, $context);
+    // Get the 'teacher' role
+    $teacher_role = $DB->get_record('role', array('shortname' => 'teacher'));
+    // Get the 'teaching assistant' role
+    $role_ta = $DB->get_record('role', array('shortname' => 'teachingassistant'));
 
+
+    $context = context_course::instance($courseid);
+
+    $teachers = get_role_users($teacher_role->id, $context);
+    $teacher = get_role_users($role->id, $context);
+    // Get users with the 'teaching assistant' role
+    $teachers_ta = get_role_users($role_ta->id, $context);
+
+
+    // Merge the two arrays of teachers
+    $all_teachers = array_merge($teacher, $teachers, $teachers_ta);
     $teachersmenu = array();
-    if ($teachers) {
-        foreach ($teachers as $teacher) {
+    if ( $all_teachers) {
+        foreach ( $all_teachers as $teacher) {
             $teacherarray=new stdClass;
             $teacherarray->email = $teacher->email;
             $teacherarray->name = fullname($teacher);

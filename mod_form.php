@@ -62,16 +62,31 @@ class mod_zoom_mod_form extends moodleform_mod {
         $PAGE->requires->js_call_amd("mod_zoom/form", 'init');
 
         $isnew = empty($this->_cm);
+        
 
-        $zoomuserid = zoom_get_user_id(false);
-
+       
+       $zoomuserid = zoom_get_user_id(false);
+      
         // If creating a new instance, but the Zoom user does not exist.
         if ($isnew && $zoomuserid === false) {
-            // Assume user is using Zoom for the first time.
-            $errstring = 'zoomerr_usernotfound';
-            // After they set up their account, the user should continue to the page they were on.
-            $nexturl = $PAGE->url;
-            zoom_fatal_error($errstring, 'mod_zoom', $nexturl, $config->zoomurl);
+              /**
+               * Joel Dapiawen 
+               * February 12, 2024
+               * Try to use other methods to login the user!
+               */  
+                $zoomuser = zoom_get_user_zoomemail($USER);
+                $zoomuser_id = $zoomuser->id;
+                if ($isnew &&  $zoomuser !== false) {
+                    $zoomuserid =  $zoomuser_id;
+                }else {
+                    
+                        //Assume user is using Zoom for the first time.
+                        $errstring = 'zoomerr_usernotfound';
+                        // After they set up their account, the user should continue to the page they were on.
+                        $nexturl = $PAGE->url;
+                        zoom_fatal_error($errstring, 'mod_zoom', $nexturl, $config->zoomurl);
+                }
+          
         }
 
         // Array of emails and proper names of Moodle users in this course that
@@ -82,8 +97,17 @@ class mod_zoom_mod_form extends moodleform_mod {
         if ($zoomuserid !== false) {
             // Get the array of users they can schedule.
             $canschedule = zoom_webservice()->get_schedule_for_users($zoomuserid);
+            error_log(print_r($canschedule, 1));
         }
-
+        //else {
+          //  $zoomuser = zoom_get_user_zoomemail($USER);
+           // $zoomuser_id = $zoomuser->id;
+           //$canschedule = zoom_webservice()->get_schedule_for_users($zoomuserid);
+          // print_r($canschedule);
+           //error_log(print_r($canschedule, 1));
+          
+       // }
+       
         if (!empty($canschedule)) {
             // Add the current user.
             $canschedule[$zoomuserid] = new stdClass();
@@ -174,11 +198,58 @@ class mod_zoom_mod_form extends moodleform_mod {
         if (has_capability('mod/zoom:assign', $context)) {
 
             $teacherarray = zoom_get_course_instructors($this->_course->id);
+            /**
+             * Joel Dapiawen
+             * February 12, 2024
+             * If the email format is incorrect, correct it and add it to the dropdown menu
+             */
+                $teachersmenu = array();
+                foreach ($teacherarray as $teacher) {
+                    // Split the name into first and last name
+                    $name_parts = explode(' ', $teacher->name);
+                    $first_name = strtolower($name_parts[0]);
+                    $last_name = strtolower($name_parts[count($name_parts) - 1]);
+
+                    // Construct the expected email address format
+                    $expected_email = $first_name . '.' . $last_name . '@uregina.ca';
+
+                    // Check if the email matches the expected format
+                    if (strtolower($teacher->email) === $expected_email) {
+                        // If the email matches the expected format, add it to the dropdown menu
+                        $teachersmenu[$teacher->email] = $teacher->name;
+                    } else {
+                        // If the email format is incorrect, correct it and add it to the dropdown menu
+                        $corrected_email = $expected_email;
+                        $teachersmenu[$corrected_email] = $teacher->name;
+                    }
+                }
+           // error_log(print_r($teacherarray, 1));
+           // error_log(print_r($teachersmenu, 1));
+ 
+            $select = $mform->addElement('select', 'assign', get_string('assign', 'zoom'), $teachersmenu);
+            //Dont need to call anything we just want to get the user who is the host of the meeting.
+            $zoomuser = zoom_webservice()->get_user($this->current->host_id);
+          
+            if ($zoomuser) {
+                    if (!$isnew) {
+                        $select->setSelected(strtolower($zoomuser->email));
+                    }else {
+                        $select->setSelected(strtolower($zoomuser->email));
+                    }
+
+            } 
+
+           /*
+         Add an assign instructor field if user has the capbility to do so
+          $context = context_course::instance($this->_course->id);
+           if (has_capability('mod/zoom:assign', $context)) {
+
+          $teacherarray = zoom_get_course_instructors($this->_course->id);
 
             $teachersmenu = array($USER->email => fullname($USER));
-            foreach ($teacherarray as $teacher) {
-                $teachersmenu[$teacher->email] = $teacher->name;
-            }
+         foreach ($teacherarray as $teacher) {
+             $teachersmenu[$teacher->email] = $teacher->name;
+          }
             $select = $mform->addElement('select', 'assign', get_string('assign', 'zoom'), $teachersmenu);
             //need to set current host here
             if(!$isnew){
@@ -201,8 +272,10 @@ class mod_zoom_mod_form extends moodleform_mod {
                // $select->setSelected($zoomuser->email);
             }
         }
+         */
+        }
                
-
+        //var_dump($this->current->host_id);
         // Add title (stored in database as 'name').
         $mform->addElement('text', 'name', get_string('title', 'zoom'), ['size' => '64']);
         $mform->setType('name', PARAM_TEXT);
@@ -456,10 +529,7 @@ class mod_zoom_mod_form extends moodleform_mod {
         // Getting Course participants.
         $courseparticipants = [];
         foreach ($participants as $participant) {
-            $courseparticipants[] = [
-                'participantid' => $participant->id,
-                'participantname' => fullname($participant) . ' <' . $participant->email . '>',
-            ];
+            $courseparticipants[] = ['participantid' => $participant->id, 'participantemail' => $participant->email];
         }
 
         // Getting Course groups.
@@ -815,7 +885,7 @@ class mod_zoom_mod_form extends moodleform_mod {
                 get_string('recordingvisibility', 'mod_zoom'),
                 get_string('yes')
             );
-            $mform->setDefault('recordings_visible_default', 1);
+            $mform->setDefault('recordings_visible_default', 0);
             $mform->addHelpButton('recordings_visible_default', 'recordingvisibility', 'mod_zoom');
         }
 
@@ -906,11 +976,11 @@ class mod_zoom_mod_form extends moodleform_mod {
         global $DB;
 
         parent::data_postprocessing($data);
+        error_log(print_r($data));
 
         // Get config.
         $config = get_config('zoom');
-
-        // If the admin did show the alternative hosts user picker.
+              // If the admin did show the alternative hosts user picker.
         if ($config->showalternativehosts == ZOOM_ALTERNATIVEHOSTS_PICKER) {
             // If there was at least one alternative host selected, process these users.
             if (count($data->alternative_hosts_picker) > 0) {
@@ -933,7 +1003,9 @@ class mod_zoom_mod_form extends moodleform_mod {
 
             // Get latest list of alternative hosts from the DB.
             $result = $DB->get_field('zoom', 'alternative_hosts', ['meeting_id' => $data->meeting_id], IGNORE_MISSING);
-
+            print_r($result);
+            error_log(print_r($config->showalternativehosts));
+            error_log(print_r($result));
             // Proceed only if there is a field of alternative hosts already.
             if ($result !== false) {
                 $alternativehostsdb = zoom_get_alternative_host_array_from_string($result);
@@ -1184,24 +1256,28 @@ class mod_zoom_mod_form extends moodleform_mod {
 
         /**
          * Joel Dapiawen
-         * January 8, 2024
-         * Check host capability
+         * April 7, 2024
+         * Need to update this Validate assign field form if user account is found in zoom
          */
         if (isset($data['assign'])) {
             $useremail = $data['assign'];
-            if($useremail != $USER->email){
-                $user = zoom_get_user_info($useremail);
-                if($user){   
+            error_log($useremail);
+           // if($useremail != $USER->email){
+           //$user = zoom_get_user_info($useremail);
+             //   error_log(print_r($user, 1));
+                 // error_log(print_r($teachersmenu, 1));
+               // if($user){   
                     // we dont need to call class here anymore.
                     // call the function right away.              
-                    $zoomuser = zoom_email_alias($user);
+                  //  $zoomuser = zoom_email_alias($user);
                  
-                    if(!$zoomuser){
-                        $errors['assign'] = $useremail.get_string('err_account_invalid', 'mod_zoom');
-                    }
-                }else
-                    $errors['assign'] = $useremail.get_string('err_account_invalid', 'mod_zoom');
-            }
+                  //  if(!$zoomuser){
+                  //      $errors['assign'] = $useremail.get_string('err_account_invalid', 'mod_zoom');
+                  //  } else {
+                  //  $errors['assign'] = $useremail.get_string('err_account_invalid', 'mod_zoom');
+                  //  }
+               // }
+           // }
         } //END of ADDED
         return $errors;
     }
