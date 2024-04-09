@@ -561,16 +561,24 @@ function zoom_get_course_instructors($courseid) {
     $role = $DB->get_record('role', array('shortname' => 'editingteacher'));
     // Get the 'teacher' role
     $teacher_role = $DB->get_record('role', array('shortname' => 'teacher'));
-    // Get the 'teaching assistant' role
-    $role_ta = $DB->get_record('role', array('shortname' => 'teachingassistant'));
 
+    /**
+     * Joel Dapiawen
+     * April 1, 2024
+     * Add Teaching assistant role in drop down form to be selected as a host
+     */
+
+    // Get the 'teaching assistant' role
+    $role_ta = $DB->get_record('role', array('shortname' => 'teaching-assistant'));
 
     $context = context_course::instance($courseid);
+    
+    // Get users with the 'teaching assistant' role
+    $teachers_ta = get_role_users($role_ta->id, $context);
 
     $teachers = get_role_users($teacher_role->id, $context);
     $teacher = get_role_users($role->id, $context);
-    // Get users with the 'teaching assistant' role
-    $teachers_ta = get_role_users($role_ta->id, $context);
+   
 
 
     // Merge the two arrays of teachers

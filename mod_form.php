@@ -233,10 +233,7 @@ class mod_zoom_mod_form extends moodleform_mod {
             if ($zoomuser) {
                     if (!$isnew) {
                         $select->setSelected(strtolower($zoomuser->email));
-                    }else {
-                        $select->setSelected(strtolower($zoomuser->email));
                     }
-
             } 
 
            /*
@@ -1257,7 +1254,7 @@ class mod_zoom_mod_form extends moodleform_mod {
         /**
          * Joel Dapiawen
          * April 7, 2024
-         * Need to update this Validate assign field form if user account is found in zoom
+         * Need to update this Validate assign field form if user account is or not found in zoom
          */
         if (isset($data['assign'])) {
             $useremail = $data['assign'];
