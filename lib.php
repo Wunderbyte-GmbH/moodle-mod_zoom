@@ -68,7 +68,7 @@ function zoom_supports($feature) {
  * @return int The id of the newly inserted zoom record
  */
 function zoom_add_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
-    global $CFG, $DB;
+    global $CFG, $DB, $USER;
     require_once($CFG->dirroot . '/mod/zoom/locallib.php');
 
     if (defined('PHPUNIT_TEST') && PHPUNIT_TEST) {
@@ -93,10 +93,25 @@ function zoom_add_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
 
     $zoom->course = (int) $zoom->course;
 
-    //UOFR HACK Added for assign
+    /**
+     * Joel Dapiawen
+     * March 16, 2024
+     * Update assign form for host and try other methods to verify the host.
+     */
     if(isset($zoom->assign)){
         $newhost = zoom_webservice()->get_user($zoom->assign);
+        print_r($newhost->id);
+
+        if (!$newhost) {
+            $zoomuser = zoom_get_user_zoomemail($USER);
+           // error_log($zoomuser);
+           // error_log(print_r($zoomuser), 1);
+            $newhost = zoom_webservice()->get_user($zoomuser->id);
+       
+       }
+     
         //check if hostid matches selected host
+       
         if($zoom->host_id != $newhost->id){
             $zoom->host_id= $newhost->id;
         }
@@ -157,7 +172,7 @@ function zoom_add_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
  * @return boolean Success/Failure
  */
 function zoom_update_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
-    global $CFG, $DB;
+    global $CFG, $DB, $USER;
     require_once($CFG->dirroot . '/mod/zoom/locallib.php');
 
     // The object received from mod_form.php returns instance instead of id for some reason.
@@ -196,9 +211,19 @@ function zoom_update_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
     $zoom->webinar = $updatedzoomrecord->webinar;
 
     $changehost = FALSE;
-    //Added for assign
+     /**
+     * Joel Dapiawen
+     * March 16, 2024
+     * Update assign form for host and try other methods to verify the host.
+     */
     if(isset($zoom->assign)){
         $newhost = zoom_webservice()->get_user($zoom->assign);
+        if (!$newhost) {
+            $zoomuser = zoom_get_user_zoomemail($USER);
+           // error_log($zoomuser);
+           // error_log(print_r($zoomuser), 1);
+         
+       }
         //check if hostid matches selected host
         if($zoom->host_id != $newhost->id){
             $zoom->host_id= $newhost->id;
