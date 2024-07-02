@@ -66,7 +66,7 @@ class mod_zoom_mod_form extends moodleform_mod {
 
        
        $zoomuserid = zoom_get_user_id(false);
-      
+     
         // If creating a new instance, but the Zoom user does not exist.
         if ($isnew && $zoomuserid === false) {
               /**
@@ -99,14 +99,7 @@ class mod_zoom_mod_form extends moodleform_mod {
             $canschedule = zoom_webservice()->get_schedule_for_users($zoomuserid);
             error_log(print_r($canschedule, 1));
         }
-        //else {
-          //  $zoomuser = zoom_get_user_zoomemail($USER);
-           // $zoomuser_id = $zoomuser->id;
-           //$canschedule = zoom_webservice()->get_schedule_for_users($zoomuserid);
-          // print_r($canschedule);
-           //error_log(print_r($canschedule, 1));
-          
-       // }
+       
        
         if (!empty($canschedule)) {
             // Add the current user.
@@ -193,88 +186,155 @@ class mod_zoom_mod_form extends moodleform_mod {
         // Adding the "general" fieldset, where all the common settings are showed.
         $mform->addElement('header', 'general', get_string('general', 'form'));
 
-        //Add an assign instructor field if user has the capbility to do so
+        
         $context = context_course::instance($this->_course->id);
         if (has_capability('mod/zoom:assign', $context)) {
-
+        
             $teacherarray = zoom_get_course_instructors($this->_course->id);
             /**
              * Joel Dapiawen
              * February 12, 2024
-             * If the email format is incorrect, correct it and add it to the dropdown menu
+             * update June 12, 2024
+             * Try to format the email address of the user to the expected format and add it to the dropdown menu
+             * Select the host who owns the meeting when editing the Zoom meeting.
              */
-                $teachersmenu = array();
-                foreach ($teacherarray as $teacher) {
-                    // Split the name into first and last name
+            $teachersmenu = array();
+            $alert_messages = array(); 
+            $current_user_alert = ''; 
+        
+            foreach ($teacherarray as $teacher) {
+                // Convert the email address to lowercase
+            $teacher_email_lower = strtolower($teacher->email);
+            
+            // Check if the user has a valid Zoom account
+            $zoom_user = zoom_webservice()->get_user($teacher_email_lower);
+
+                if ($zoom_user) {
+                    // If the user has a valid Zoom account, use their current email address
+                    $teachersmenu[$teacher_email_lower] = $teacher->name;
+                    
+                    // Split the name into parts
                     $name_parts = explode(' ', $teacher->name);
-                    $first_name = strtolower($name_parts[0]);
-                    $last_name = strtolower($name_parts[count($name_parts) - 1]);
-
-                    // Construct the expected email address format
-                    $expected_email = $first_name . '.' . $last_name . '@uregina.ca';
-
-                    // Check if the email matches the expected format
-                    if (strtolower($teacher->email) === $expected_email) {
-                        // If the email matches the expected format, add it to the dropdown menu
-                        $teachersmenu[$teacher->email] = $teacher->name;
+        
+                    // Ensure there are enough parts to split into first and last names
+                    if (count($name_parts) >= 2) {
+                        $first_name = strtolower(array_shift($name_parts));
+                        $last_name = strtolower(implode('', $name_parts));
+        
+                        // Construct the expected email address format
+                        $expected_email = $first_name . '.' . $last_name . '@uregina.ca';
+        
+                        // Check if the email matches the expected format
+                        if (strtolower($teacher_email_lower) !== $expected_email) {
+                            // Add alert message if email does not match the expected format
+                            $message = "User {$teacher->name}, email address ({$teacher_email_lower}) seems to be incorrectly formatted. It should be in the format: {$expected_email}. To avoid any future issues please call IT support.";
+                            $alert_messages[] = $message;
+                            if ($teacher_email_lower == $USER->email) {
+                                $current_user_alert = $message;
+                            }
+                        }
                     } else {
-                        // If the email format is incorrect, correct it and add it to the dropdown menu
-                        $corrected_email = $expected_email;
+                        // Handle edge case where name might not split correctly
+                        $corrected_email = strtolower($teacher->name) . '@uregina.ca';
+                        if (strtolower($teacher_email_lower) !== $corrected_email) {
+                            // Add alert message if email does not match the expected format
+                            $message = "User {$teacher->name}, email address ({$teacher_email_lower}) seems to be incorrectly formatted. It should be in the format: {$corrected_email}. To avoid any future issues please call IT support.";
+                            $alert_messages[] = $message;
+                            if ($teacher_email_lower == $USER->email) {
+                                $current_user_alert = $message;
+                            }
+                        }
+                    }
+        
+                } else {
+                    // Split the name into parts
+                    $name_parts = explode(' ', $teacher->name);
+        
+                    // Ensure there are enough parts to split into first and last names
+                    if (count($name_parts) >= 2) {
+                        $first_name = strtolower(array_shift($name_parts));
+                        $last_name = strtolower(implode('', $name_parts));
+        
+                        // Construct the expected email address format
+                        $expected_email = $first_name . '.' . $last_name . '@uregina.ca';
+        
+                        // Check if the email matches the expected format
+                        if (strtolower($teacher_email_lower) === $expected_email) {
+                            // If the email matches the expected format, add it to the dropdown menu
+                            $teachersmenu[$teacher_email_lower] = $teacher->name;
+                        } else {
+                            // If the email format is incorrect, correct it and add it to the dropdown menu
+                            $corrected_email = $expected_email;
+                            $teachersmenu[$corrected_email] = $teacher->name;
+                            // Add alert message
+                            $message = "User {$teacher->name}, email address ({$teacher_email_lower}) seems to be incorrectly formatted. It should be in the format: {$expected_email}. To avoid any future issues please call IT support.";
+
+                            $alert_messages[] = $message;
+                            if ($teacher_email_lower == $USER->email) {
+                                $current_user_alert = $message;
+                            }
+                        }
+                    } else {
+                        // Handle edge case where name might not split correctly
+                        $corrected_email = strtolower($teacher->name) . '@uregina.ca';
                         $teachersmenu[$corrected_email] = $teacher->name;
+                        // Add alert message
+                        $message = "User {$teacher->name}, email address ({$teacher_email_lower}) seems to be incorrectly formatted. It should be in the format: {$corrected_email}. To avoid any future issues please call IT support.";
+
+                        if ($teacher_email_lower == $USER->email) {
+                            $current_user_alert = $message;
+                        }
                     }
                 }
-           // error_log(print_r($teacherarray, 1));
-           // error_log(print_r($teachersmenu, 1));
- 
+            }
+        
+            // Generate Bootstrap alerts for admin support roles
+            $alert_html = '';
+            if (has_capability('moodle/site:config', $context) || has_capability('moodle/site:doanything', $context)) {
+                foreach ($alert_messages as $message) {
+                    $alert_html .= "<div class='alert alert-warning alert-dismissible fade show' role='alert'>
+                            {$message}
+                            <button type='button' class='close' data-dismiss='alert' aria-label='Close'>
+                            <span aria-hidden='true'>&times;</span>
+                          </button>
+                          </div>";
+                }
+            } else {
+                // Display only the current user's alert message
+                if (!empty($current_user_alert)) {
+                    $alert_html .= "<div class='alert alert-warning alert-dismissible fade show' role='alert'>
+                            {$current_user_alert}
+                            <button type='button' class='close' data-dismiss='alert' aria-label='Close'>
+                            <span aria-hidden='true'>&times;</span>
+                          </button>
+                          </div>";
+                }
+            }
+        
+            // Add alert HTML to the form
+            if (!empty($alert_html)) {
+                $mform->addElement('html', $alert_html);
+            }
+        
+            // Add an assign instructor field if the user has the capability to do so
             $select = $mform->addElement('select', 'assign', get_string('assign', 'zoom'), $teachersmenu);
-            //Dont need to call anything we just want to get the user who is the host of the meeting.
+        
+            // Don't need to call anything, we just want to get the user who is the host of the Zoom meeting.
             $zoomuser = zoom_webservice()->get_user($this->current->host_id);
-          
+        
             if ($zoomuser) {
-                    if (!$isnew) {
-                        $select->setSelected(strtolower($zoomuser->email));
-                    }
-            } 
-
-           /*
-         Add an assign instructor field if user has the capbility to do so
-          $context = context_course::instance($this->_course->id);
-           if (has_capability('mod/zoom:assign', $context)) {
-
-          $teacherarray = zoom_get_course_instructors($this->_course->id);
-
-            $teachersmenu = array($USER->email => fullname($USER));
-         foreach ($teacherarray as $teacher) {
-             $teachersmenu[$teacher->email] = $teacher->name;
-          }
-            $select = $mform->addElement('select', 'assign', get_string('assign', 'zoom'), $teachersmenu);
-            //need to set current host here
-            if(!$isnew){
-
-                $zoomusers=[];
-                foreach($teacherarray as $teacher){
-                    //not amazing may have to reconsider if we end up hitting the timeout limit for zoom requests
-                    $zoomusers[] = zoom_webservice()->get_user($teacher->email);
+                if (!$isnew) {
+                    //select the host of the Zoom meeting
+                    $select->setSelected(strtolower($zoomuser->email));
                 }
-                foreach($zoomusers as $zoomuser){
-                    if($zoomuser->id == $this->current->host_id ){
-                        $select->setSelected($zoomuser->email);
-                    }
-                }
-            }else {
-                //Joel Dapiawen - Jan 8, 2024
-               //it seems it is missing a {} bracket here.. for else {}
-               //we have to pick the host
-               $select->setSelected($this->current->host_id);
-               // $select->setSelected($zoomuser->email);
             }
         }
-         */
-        }
+        
                
-        //var_dump($this->current->host_id);
-        // Add title (stored in database as 'name').
         $mform->addElement('text', 'name', get_string('title', 'zoom'), ['size' => '64']);
+         // Render Bootstrap alerts
+     
+
         $mform->setType('name', PARAM_TEXT);
         $mform->addRule('name', null, 'required', null, 'client');
         $mform->addRule('name', get_string('maximumchars', '', 200), 'maxlength', 200, 'client');
