@@ -433,12 +433,12 @@ function zoom_get_user_zoomemail($user) {
       
 	} else {
 		$zoom_email = strtolower($user->email);
-      // error_log(print_r($zoom_email));
+     
 	}
 	
 	//try user with first.last@ZOOM_USER_DOMAIN
     $zoomuser =  zoom_webservice()->get_user($zoom_email);
-	//print_r($zoomuser);
+	
 	if ($zoomuser === false) {
 		//try titlcase
 		$zoom_email = ucfirst($user->firstname).'.'.ucfirst($user->lastname).'@'.ZOOM_USER_DOMAIN;

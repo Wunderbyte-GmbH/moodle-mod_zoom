@@ -100,12 +100,10 @@ function zoom_add_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
      */
     if(isset($zoom->assign)){
         $newhost = zoom_webservice()->get_user($zoom->assign);
-        print_r($newhost->id);
+       
 
         if (!$newhost) {
             $zoomuser = zoom_get_user_zoomemail($USER);
-           // error_log($zoomuser);
-           // error_log(print_r($zoomuser), 1);
             $newhost = zoom_webservice()->get_user($zoomuser->id);
        
        }
@@ -219,10 +217,7 @@ function zoom_update_instance(stdClass $zoom, mod_zoom_mod_form $mform = null) {
     if(isset($zoom->assign)){
         $newhost = zoom_webservice()->get_user($zoom->assign);
         if (!$newhost) {
-            $zoomuser = zoom_get_user_zoomemail($USER);
-           // error_log($zoomuser);
-           // error_log(print_r($zoomuser), 1);
-         
+            $zoomuser = zoom_get_user_zoomemail($USER);     
        }
         //check if hostid matches selected host
         if($zoom->host_id != $newhost->id){
