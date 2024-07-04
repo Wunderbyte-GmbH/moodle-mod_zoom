@@ -188,6 +188,13 @@ class mod_zoom_mod_form extends moodleform_mod {
 
         
         $context = context_course::instance($this->_course->id);
+          /**
+             * Joel Dapiawen
+             * February 12, 2024
+             * Update July 4, 2024
+             * Try to format the email address of the user to the expected format and add it to the dropdown menu
+             * Select the host who owns the meeting when editing the Zoom meeting.
+             */
         if (has_capability('mod/zoom:assign', $context)) {
             $teacherarray = zoom_get_course_instructors($this->_course->id);
         
@@ -210,7 +217,7 @@ class mod_zoom_mod_form extends moodleform_mod {
                         // Construct expected email format
                         $expected_email = $first_name . '.' . $last_name . '@uregina.ca';
             
-                        // do not send alert message if the email is acceptable like sample.lname@uregina.ca or sample+urt00@uregina.ca
+                        // Do not send alert message if the email address is acceptable like nickname.lname@uregina.ca or sample+urt00@uregina.ca
                         if ($teacher_email_lower !== $expected_email && !preg_match('/^[a-z]+\.[a-z]+.*|^[a-z]+\+.*@uregina\.ca$/m', $teacher_email_lower)) {
                             // Add alert message if email does not match the expected format
                             $message = "The email address ({$teacher_email_lower}) appears to be incorrectly formatted. It should be in the format: {$expected_email}. To avoid any future issues please contact IT support.";
@@ -1064,7 +1071,7 @@ class mod_zoom_mod_form extends moodleform_mod {
 
             // Get latest list of alternative hosts from the DB.
             $result = $DB->get_field('zoom', 'alternative_hosts', ['meeting_id' => $data->meeting_id], IGNORE_MISSING);
-            print_r($result);
+          
             error_log(print_r($config->showalternativehosts));
             error_log(print_r($result));
             // Proceed only if there is a field of alternative hosts already.
@@ -1315,31 +1322,7 @@ class mod_zoom_mod_form extends moodleform_mod {
             }
         }
 
-        /**
-         * Joel Dapiawen
-         * April 7, 2024
-         * Need to update this Validate assign field form if user account is or not found in zoom
-         */
-        if (isset($data['assign'])) {
-            $useremail = $data['assign'];
-            error_log($useremail);
-           // if($useremail != $USER->email){
-           //$user = zoom_get_user_info($useremail);
-             //   error_log(print_r($user, 1));
-                 // error_log(print_r($teachersmenu, 1));
-               // if($user){   
-                    // we dont need to call class here anymore.
-                    // call the function right away.              
-                  //  $zoomuser = zoom_email_alias($user);
-                 
-                  //  if(!$zoomuser){
-                  //      $errors['assign'] = $useremail.get_string('err_account_invalid', 'mod_zoom');
-                  //  } else {
-                  //  $errors['assign'] = $useremail.get_string('err_account_invalid', 'mod_zoom');
-                  //  }
-               // }
-           // }
-        } //END of ADDED
+        
         return $errors;
     }
 }
