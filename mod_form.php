@@ -97,7 +97,7 @@ class mod_zoom_mod_form extends moodleform_mod {
         if ($zoomuserid !== false) {
             // Get the array of users they can schedule.
             $canschedule = zoom_webservice()->get_schedule_for_users($zoomuserid);
-            error_log(print_r($canschedule, 1));
+           // error_log(print_r($canschedule, 1));
         }
        
        
@@ -263,7 +263,7 @@ class mod_zoom_mod_form extends moodleform_mod {
                             }
                         } else {
                             // Zoom user not found, display the cannot be found message
-                            $a = 'https://zoom.us/signin#/login';
+                            $a = 'https://uregina-ca.zoom.us';
                             $message = "Unable to find your account ({$teacher->name}) on Zoom. If you are using Zoom for the first time, you must activate your Zoom account by logging into <a href=\"{$a}\" target=\"_blank\">{$a}</a>. Once you have activated your Zoom account, reload this page and continue setting up your meeting. Otherwise, make sure your email on Zoom matches your email on this system.";
                             $alert_messages[] = $message;
                             if ($teacher_email_lower == $USER->email) {
@@ -1044,7 +1044,7 @@ class mod_zoom_mod_form extends moodleform_mod {
         global $DB;
 
         parent::data_postprocessing($data);
-        error_log(print_r($data));
+        //error_log(print_r($data));
 
         // Get config.
         $config = get_config('zoom');
@@ -1072,8 +1072,8 @@ class mod_zoom_mod_form extends moodleform_mod {
             // Get latest list of alternative hosts from the DB.
             $result = $DB->get_field('zoom', 'alternative_hosts', ['meeting_id' => $data->meeting_id], IGNORE_MISSING);
           
-            error_log(print_r($config->showalternativehosts));
-            error_log(print_r($result));
+          //  error_log(print_r($config->showalternativehosts));
+            
             // Proceed only if there is a field of alternative hosts already.
             if ($result !== false) {
                 $alternativehostsdb = zoom_get_alternative_host_array_from_string($result);
