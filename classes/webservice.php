@@ -1153,54 +1153,199 @@ class webservice {
         return $recordings;
     }
 
-    //uofr hack dapiawej -- august 29-2023 Adapting server to server oauth access token function for import Zoom Recordings
-    public function get_user_recording_list($zoomMails,$datefrom,$dateto) {
+    /**
+     * Retrieves the list of cloud recordings for a user within a given date range from Zoom.
+     * 
+     * This function fetches the recordings associated with a Zoom user for a specified date range.
+     * It handles OAuth authentication, retrieves recordings, and returns them in a structured format.
+     * Joel Dapiawen: Update October 9, 2024
+     * 
+     * @param string $zoomMails The email address of the Zoom user.
+     * @param string $datefrom The start date for fetching recordings (in YYYY-MM-DD format).
+     * @param string $dateto The end date for fetching recordings (in YYYY-MM-DD format).
+     * @return stdClass|array Returns the list of recordings for the user, including types and URLs.
+     * @throws moodle_exception If no recordings are found or if an API error occurs.
+     */
+    public function get_user_recording_list($zoomMails, $datefrom, $dateto) {
         $meetingid = $this->encode_uuid($zoomMails);
         $url = 'users/' . $zoomMails . '/recordings';
-        $settingsurl = 'users/' . $zoomMails . '/recordings/?page_size=30&mc=false&trash=false&from='.$datefrom."&to=".$dateto;
+        $settingsurl = 'users/' . $zoomMails . '/recordings/?page_size=30&mc=false&trash=false&from=' . $datefrom . "&to=" . $dateto;
         $allowedrecordingtypes = ['MP4', 'M4A'];
         $recordings = new stdClass();
         try {
             //$response = $this->make_call($url);
             $response = $this->make_call($settingsurl);
-          
-                foreach ($response as $rec) {
-                    if (!empty($rec)){
-              
-                        $recordings = $rec;
-                    }
+
+            foreach ($response as $rec) {
+                if (!empty($rec)) {
+                    $recordings = $rec;
                 }
-            
+            }
+
         } catch (moodle_exception $error) {
-            // No recordings found for this meeting id.
+            // No recordings found for this meeting ID.
             $recordings = [];
         }
         return $recordings;
     }
-   //uofr hack dapiawej -- august 29-2023 Adapting server to server oauth access token function for import Zoom Recordings
+
+
+    /**
+     * Retrieves the recording settings for a specific Zoom meeting.
+     * 
+     * This function fetches the settings associated with a Zoom meeting's recordings, 
+     * checking whether the recording is allowed to be downloaded and if a password is set.
+     * Joel Dapiawen: Update October 9, 2024
+     * 
+     * @param string $meeting_id The UUID of the Zoom meeting.
+     * @return string|bool Returns a message indicating whether the recording can be downloaded or false if not allowed.
+     * @throws moodle_exception If an error occurs while fetching the meeting's recording settings.
+     */
     public function get_user_meeting_recording($meeting_id) {
         $meetingid = $this->encode_uuid($meeting_id);
         $url = 'meetings/' . $meeting_id . '/recordings';
         $settingsurl = 'meetings/' . $meeting_id . '/recordings/settings';
-        
-        $recordings = new stdClass();
+
+        $result = ''; 
         try {
-            //$response = $this->make_call($url);
             $response = $this->make_call($settingsurl);
-               
-                foreach ($response as $rec) {
-                    if (!empty($rec)){
-                        $rec->viewer_download = true;
-                        $recordings = $rec;
-                    }
-                }
-          
+            
+            if ($response->viewer_download === false || !empty($response->password)) {
+                // If download is not allowed or a password is set, return false.
+                $result = false; 
+            } else {
+                // If download is allowed, return a confirmation message.
+                $result = "<p>This recording is allowed to be downloaded</p>";
+            }
+            
         } catch (moodle_exception $error) {
-            // No recordings found for this meeting id.
-            $recordings = [];
+            // Handle any API errors or missing recordings.
+            $result = 'Error: No recordings found or unable to fetch settings for this meeting.';
         }
-        return $recordings;
+        
+        return $result; // Return the result message or false if download is not allowed.
     }
+
+    /**
+     * Grants access to a Zoom meeting recording by allowing it to be downloadable.
+     * 
+     * This function updates the recording settings for a specific Zoom meeting, enabling viewer download access
+     * and removing any existing password requirement.
+     * Joel Dapiawen: Update October 9, 2024
+     * 
+     * @param string $meeting_id The UUID of the Zoom meeting.
+     * @return string Returns a success or failure message based on the outcome of the request.
+     * @throws moodle_exception If an error occurs while updating the recording settings.
+     */
+    public function grant_access_to_recording($meeting_id) {
+        $settingsurl = 'meetings/' . $this->encode_uuid($meeting_id) . '/recordings/settings';
+
+        // Data to patch: setting viewer_download to true and removing the password
+        $data = array(
+            'viewer_download' => true,
+            'password' => ""
+        );
+
+        try {
+            // Use 'patch' as the third parameter to indicate it's a PATCH request
+            $response = $this->make_call($settingsurl, $data, 'patch');
+
+            // Check if the response was successful
+            if ($response) {
+                return "Access granted successfully. Recording is now downloadable.";
+            } else {
+                return "Failed to grant access.";
+            }
+        } catch (moodle_exception $error) {
+            // Handle any errors during the API call
+            return 'Error: Unable to update the recording settings.';
+        }
+    }
+
+    /**
+     * Updates access settings for a Zoom meeting recording.
+     * 
+     * This function modifies the recording settings for a specific Zoom meeting. 
+     * It allows you to either grant or revoke viewer download access. Optionally, you can set a new passcode 
+     * when revoking access to make the recording private.
+     * Joel Dapiawen: Update October 10, 2024
+     * 
+     * @param string $meeting_id The UUID of the Zoom meeting.
+     * @param bool $grant_access Whether to grant (true) or revoke (false) viewer download access.
+     * @param string $new_passcode An optional new passcode to set when revoking access.
+     * @return string A message indicating the result of the access update.
+     * @throws moodle_exception If an error occurs while updating the recording settings.
+     */
+    public function update_access_to_recording($meeting_id, $grant_access = true, $new_passcode = "") {
+    $settingsurl = 'meetings/' . $this->encode_uuid($meeting_id) . '/recordings/settings';
+
+    // Prepare the data to patch
+    $data = array(
+        'viewer_download' => $grant_access, // true to grant access, false to revoke
+    );
+
+    // Only include the password when revoking access and if a new passcode is provided
+    if (!$grant_access && !empty($new_passcode)) {
+        $data['password'] = $new_passcode;
+    }
+
+    try {
+        // Make the PATCH request
+        $response = $this->make_call($settingsurl, $data, 'patch');
+
+        // Zoom returns 204 status for successful updates
+        if (isset($response->code) && $response->code === 204) {
+            return $grant_access 
+                ? "Access granted successfully. Recording is now downloadable." 
+                : "Access revoked successfully. Recording is now private.";
+        } elseif (empty($response)) {
+            // Handle the case where Zoom returns no content (HTTP 204)
+            return $grant_access 
+                ? "Access granted successfully (no content returned)." 
+                : "Access revoked successfully (no content returned).";
+        } else {
+            // Handle other unsuccessful responses (e.g., 4xx, 5xx status codes)
+            $error_message = isset($response->message) ? $response->message : "Unknown error";
+            return "Failed to update access settings. Error: " . $error_message;
+        }
+    } catch (moodle_exception $error) {
+        // Handle exceptions and log detailed error information
+        return 'Error: Unable to update the recording settings. Exception: ' . $error->getMessage();
+    }
+    }
+
+
+    /**
+     * Retrieves the recording details for a specific Zoom meeting.
+     * 
+     * This function fetches the recordings associated with a given Zoom meeting. 
+     * If no recordings are found, it returns an empty object to prevent warnings.
+     * Joel Dapiawen: Update October 10, 2024
+     * 
+     * @param string $meeting_id The UUID of the Zoom meeting.
+     * @return object An object containing the recording files or an empty object if none are found.
+     * @throws moodle_exception If an error occurs while fetching the recordings.
+     */
+    public function get_user_recording($meeting_id) {
+        $meetingid = $this->encode_uuid($meeting_id);
+        $url = 'meetings/' . $meeting_id . '/recordings';
+
+        try {
+            $response = $this->make_call($url);
+
+            // Check if recording files are present in the response
+            if (isset($response->recording_files)) {
+                return $response; // Return the response if recordings exist
+            } else {
+                // Return an empty object with recording_files to avoid warnings
+                return (object) ['recording_files' => []];
+            }
+        } catch (moodle_exception $error) {
+            // Handle any errors during the API call
+            return 'Error: No recordings found or unable to fetch recordings for this meeting.';
+        }
+    }
+
 
     /**
      * Retrieve recordings for a specified user and period. Handles multiple pages.
