@@ -247,8 +247,15 @@ function zoom_update_instance(stdClass $zoom, ?mod_zoom_mod_form $mform = null) 
                 }
             }
         }
+        /**
+         * Joel Dapiawen code update April 30, 2025
+         * Get cmid parameter
+         */
+        $cm = get_coursemodule_from_instance('zoom', $zoom->instance);
+        $cmid = $cm->id;
+        
         //Create new meeting with updated info
-        $response = zoom_webservice()->create_meeting($zoom);
+        $response = zoom_webservice()->create_meeting($zoom,  $cmid);
         $zoom = populate_zoom_from_response($zoom, $response);
 
         $zoom->id = $oldid;
@@ -270,10 +277,17 @@ function zoom_update_instance(stdClass $zoom, ?mod_zoom_mod_form $mform = null) 
         $updatedzoomrecord = $DB->get_record('zoom', array('id' => $zoom->instance));
         $zoom->meeting_id = $updatedzoomrecord->meeting_id;
         $zoom->webinar = $updatedzoomrecord->webinar;
-
+        
+        /**
+         * Joel Dapiawen code update April 30, 2025
+         * Get cmid parameter
+         */
+        $cm = get_coursemodule_from_instance('zoom', $zoom->instance);
+        $cmid = $cm->id;
+        
         // Update meeting on Zoom.
         try {
-            zoom_webservice()->update_meeting($zoom);
+            zoom_webservice()->update_meeting($zoom, $cmid);
             if (!empty($zoom->schedule_for)) {
                 // Only update this if we actually get a valid user.
                 if ($correcthostzoomuser = zoom_get_user($zoom->schedule_for)) {
