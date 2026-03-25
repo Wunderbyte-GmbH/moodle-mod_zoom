@@ -98,6 +98,66 @@ final class get_meeting_reports_test extends advanced_testcase {
     }
 
     /**
+     * Make sure we can still map participants if Zoom does not return UUIDs.
+     */
+    public function test_format_participant_without_uuid_uses_zoomuserid_history(): void {
+        global $DB;
+
+        $course = $this->getDataGenerator()->create_course();
+        $user = $this->getDataGenerator()->create_user([
+            'firstname' => 'Testy',
+            'lastname' => 'Testeroni',
+            'email' => 'testeroni@example.com',
+        ]);
+
+        $generator = $this->getDataGenerator()->get_plugin_generator('mod_zoom');
+        $instance = $generator->create_instance([
+            'course' => $course->id,
+            'meeting_id' => 96828262363,
+            'name' => 'Zoom',
+            'exists_on_zoom' => ZOOM_MEETING_EXISTS,
+        ]);
+
+        $detailsid = $DB->insert_record('zoom_meeting_details', [
+            'uuid' => 'history-uuid',
+            'meeting_id' => 96828262363,
+            'end_time' => 1773671704,
+            'start_time' => 1773671527,
+            'duration' => 177,
+            'topic' => 'History topic',
+            'participants_count' => 1,
+            'zoomid' => $instance->id,
+        ]);
+
+        $DB->insert_record('zoom_meeting_participants', [
+            'name' => 'TESTY TESTERONI',
+            'userid' => $user->id,
+            'detailsid' => $detailsid,
+            'zoomuserid' => '16791552',
+            'uuid' => null,
+            'user_email' => 'testeroni@example.com',
+            'join_time' => 1773671600,
+            'leave_time' => 1773671660,
+            'duration' => 60,
+        ]);
+
+        $rawparticipant = (object) [
+            'id' => '',
+            'user_id' => '16791552',
+            'user_name' => 'Testy Testeroni',
+            'user_email' => 'testeroni@example.com',
+            'join_time' => '2026-03-15T09:14:33Z',
+            'leave_time' => '2026-03-15T09:15:04Z',
+        ];
+
+        $participant = $this->meetingtask->format_participant($rawparticipant, $detailsid, [], []);
+        $this->assertEquals($user->id, $participant['userid']);
+        $this->assertEquals('TESTY TESTERONI', $participant['name']);
+        $this->assertNull($participant['uuid']);
+        $this->assertEquals(31, $participant['duration']);
+    }
+
+    /**
      * Make sure that format_participant() can match Moodle users.
      */
     public function test_format_participant_matching(): void {
@@ -344,6 +404,117 @@ final class get_meeting_reports_test extends advanced_testcase {
     }
 
     /**
+     * Tests process_meeting_reports() when participant UUID and duration are missing.
+     */
+    public function test_process_meeting_reports_missing_uuid_and_duration(): void {
+        global $DB, $SITE;
+
+        $this->assertEquals(0, $DB->count_records('zoom_meeting_details'));
+        $this->assertEquals(0, $DB->count_records('zoom_meeting_participants'));
+        $this->mockparticipantsdata = [];
+
+        $mockwwebservice = $this->createMock('\mod_zoom\webservice');
+
+        $participant = new stdClass();
+        $participant->id = '';
+        $participant->user_id = '16791552';
+        $participant->user_name = 'Testy Testeroni';
+        $participant->user_email = 'testeroni@example.com';
+        $participant->join_time = '2026-03-15T09:14:33Z';
+        $participant->leave_time = '2026-03-15T09:15:04Z';
+        $this->mockparticipantsdata['missing_uuid_payload'][] = $participant;
+
+        $mockwwebservice->method('get_meeting_participants')
+            ->will($this->returnCallback([$this, 'mock_get_meeting_participants']));
+
+        $meeting = new stdClass();
+        $meeting->id = 96828262363;
+        $meeting->topic = 'Some meeting';
+        $meeting->start_time = '2026-03-15T09:12:07Z';
+        $meeting->end_time = '2026-03-15T09:15:04Z';
+        $meeting->uuid = 'missing_uuid_payload';
+        $meeting->duration = 177;
+        $meeting->participants = 1;
+
+        $DB->insert_record('zoom', [
+            'course' => $SITE->id,
+            'meeting_id' => $meeting->id,
+            'name' => 'Zoom',
+            'exists_on_zoom' => ZOOM_MEETING_EXISTS,
+        ]);
+
+        $this->meetingtask->service = $mockwwebservice;
+        $meeting = $this->meetingtask->normalize_meeting($meeting);
+
+        $this->assertTrue($this->meetingtask->process_meeting_reports($meeting));
+        $this->assertEquals(1, $DB->count_records('zoom_meeting_details'));
+        $this->assertEquals(1, $DB->count_records('zoom_meeting_participants'));
+
+        $records = $DB->get_records('zoom_meeting_participants');
+        $this->assertCount(1, $records);
+        $record = reset($records);
+        $this->assertEquals('16791552', $record->zoomuserid);
+        $this->assertNull($record->uuid);
+        $this->assertEquals(31, $record->duration);
+
+        // Running again with the same payload should not create duplicates.
+        $this->assertTrue($this->meetingtask->process_meeting_reports($meeting));
+        $this->assertEquals(1, $DB->count_records('zoom_meeting_participants'));
+    }
+
+    /**
+     * Tests process_meeting_reports() when the meeting UUID is missing.
+     */
+    public function test_process_meeting_reports_missing_meeting_uuid(): void {
+        global $DB, $SITE;
+
+        $this->assertEquals(0, $DB->count_records('zoom_meeting_details'));
+        $this->assertEquals(0, $DB->count_records('zoom_meeting_participants'));
+        $this->mockparticipantsdata = [];
+
+        $mockwwebservice = $this->createMock('\mod_zoom\webservice');
+
+        $participant = (object) [
+            'id' => '',
+            'user_id' => '16791552',
+            'user_name' => 'Testy Testeroni',
+            'user_email' => 'testeroni@example.com',
+            'join_time' => '2026-03-15T09:14:33Z',
+            'leave_time' => '2026-03-15T09:15:04Z',
+        ];
+        $this->mockparticipantsdata['96828262363'][] = $participant;
+
+        $mockwwebservice->method('get_meeting_participants')
+            ->will($this->returnCallback([$this, 'mock_get_meeting_participants']));
+
+        $meeting = (object) [
+            'id' => 96828262363,
+            'topic' => 'Some meeting',
+            'start_time' => '2026-03-15T09:12:07Z',
+            'end_time' => '2026-03-15T09:15:04Z',
+            'duration' => 177,
+            'participants' => 1,
+        ];
+
+        $DB->insert_record('zoom', [
+            'course' => $SITE->id,
+            'meeting_id' => $meeting->id,
+            'name' => 'Zoom',
+            'exists_on_zoom' => ZOOM_MEETING_EXISTS,
+        ]);
+
+        $this->meetingtask->service = $mockwwebservice;
+        $meeting = $this->meetingtask->normalize_meeting($meeting);
+
+        $this->assertTrue($this->meetingtask->process_meeting_reports($meeting));
+        $this->assertEquals(1, $DB->count_records('zoom_meeting_details'));
+        $this->assertEquals(1, $DB->count_records('zoom_meeting_participants'));
+
+        $details = $DB->get_record('zoom_meeting_details', [], '*', MUST_EXIST);
+        $this->assertSame('m:96828262363:1773565927', $details->uuid);
+    }
+
+    /**
      * Tests that normalize_meeting() can handle different meeting records from
      * Dashboard API versus the Report API.
      */
@@ -408,6 +579,20 @@ final class get_meeting_reports_test extends advanced_testcase {
         $this->assertIsInt($meeting->end_time);
         $this->assertEquals($reportmeeting['participants_count'], $meeting->participants_count);
         $this->assertEquals($reportmeeting['total_minutes'], $meeting->total_minutes);
+
+        $meetingwithoutuuid = (object) [
+            'id' => 1000001,
+            'topic' => 'Meeting without uuid',
+            'start_time' => '2019-07-14T09:05:19.754Z',
+            'end_time' => '2019-07-14T09:16:19.754Z',
+            'participants_count' => 2,
+        ];
+
+        $meeting = $this->meetingtask->normalize_meeting($meetingwithoutuuid);
+
+        $this->assertSame('', $meeting->uuid);
+        $this->assertEquals(11 * 60, $meeting->duration);
+        $this->assertEquals(2, $meeting->participants_count);
     }
 
     /**

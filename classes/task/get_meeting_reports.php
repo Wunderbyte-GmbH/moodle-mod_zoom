@@ -226,9 +226,31 @@ class get_meeting_reports extends scheduled_task {
         $name = null;
 
         // Consolidate fields.
-        $participant->name = $participant->name ?? $participant->user_name ?? '';
-        $participant->id = $participant->id ?? $participant->participant_user_id ?? '';
+        $participant->name = trim($participant->name ?? $participant->user_name ?? '');
+        $participant->id = $participant->id ?? '';
         $participant->user_email = $participant->user_email ?? $participant->email ?? '';
+        $participant->user_id = $participant->user_id ?? $participant->participant_user_id ?? '';
+
+        $jointime = strtotime($participant->join_time ?? '');
+        if ($jointime === false) {
+            $jointime = 0;
+        }
+
+        $leavetime = strtotime($participant->leave_time ?? '');
+        if ($leavetime === false) {
+            $leavetime = $jointime;
+        }
+
+        if ($leavetime < $jointime) {
+            $leavetime = $jointime;
+        }
+
+        $duration = $participant->duration ?? null;
+        if ($duration === null || $duration === '') {
+            $duration = max(0, $leavetime - $jointime);
+        } else {
+            $duration = max(0, (int) $duration);
+        }
 
         // Cleanup the name. For some reason # gets into the name instead of a comma.
         $participant->name = str_replace('#', ',', $participant->name);
@@ -254,6 +276,34 @@ class get_meeting_reports extends scheduled_task {
             if (!empty($participantmatches)) {
                 // Found some previous matches. Find first one with userid set.
                 foreach ($participantmatches as $participantmatch) {
+                    if (!empty($participantmatch->userid)) {
+                        $moodleuserid = $participantmatch->userid;
+                        $name = $participantmatch->name;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // If UUID is missing, try to match with known Zoom user id and optional email.
+        if (empty($moodleuserid) && !empty($participant->user_id)) {
+            $participantmatches = $DB->get_records(
+                'zoom_meeting_participants',
+                ['zoomuserid' => $participant->user_id],
+                null,
+                'id, userid, name, user_email'
+            );
+
+            if (!empty($participantmatches)) {
+                foreach ($participantmatches as $participantmatch) {
+                    if (
+                        !empty($participant->user_email)
+                        && !empty($participantmatch->user_email)
+                        && $participantmatch->user_email !== $participant->user_email
+                    ) {
+                        continue;
+                    }
+
                     if (!empty($participantmatch->userid)) {
                         $moodleuserid = $participantmatch->userid;
                         $name = $participantmatch->name;
@@ -304,6 +354,14 @@ class get_meeting_reports extends scheduled_task {
             $participant->id = null;
         }
 
+        if ($name === '' || $name === null) {
+            if (!empty($participant->user_email)) {
+                $name = $participant->user_email;
+            } else if (!empty($participant->user_id)) {
+                $name = (string) $participant->user_id;
+            }
+        }
+
         return [
             'name' => $name,
             'userid' => $moodleuserid,
@@ -311,9 +369,9 @@ class get_meeting_reports extends scheduled_task {
             'zoomuserid' => $participant->user_id,
             'uuid' => $participant->id,
             'user_email' => $participant->user_email,
-            'join_time' => strtotime($participant->join_time),
-            'leave_time' => strtotime($participant->leave_time),
-            'duration' => $participant->duration,
+            'join_time' => $jointime,
+            'leave_time' => $leavetime,
+            'duration' => $duration,
         ];
     }
 
@@ -512,6 +570,42 @@ class get_meeting_reports extends scheduled_task {
     }
 
     /**
+     * Get the identifier to use when calling the Zoom participants API.
+     *
+     * Zoom may omit the UUID for some meeting payloads. In that case, use the
+     * meeting id, which the endpoint also accepts for past meeting reports.
+     *
+     * @param object $meeting Normalized or raw meeting object.
+     * @return string
+     */
+    private function get_meeting_api_identifier($meeting) {
+        $uuid = trim((string) ($meeting->uuid ?? ''));
+        if ($uuid !== '') {
+            return $uuid;
+        }
+
+        return (string) ($meeting->meeting_id ?? $meeting->id ?? '');
+    }
+
+    /**
+     * Get the value stored in zoom_meeting_details.uuid for this meeting.
+     *
+     * The column is NOT NULL and unique, so when Zoom does not provide a UUID
+     * we synthesize a stable identifier from meeting id and start time.
+     *
+     * @param object $meeting Normalized or raw meeting object.
+     * @return string
+     */
+    private function get_meeting_instance_uuid($meeting) {
+        $uuid = trim((string) ($meeting->uuid ?? ''));
+        if ($uuid !== '') {
+            return $uuid;
+        }
+
+        return substr(sprintf('m:%s:%s', $meeting->meeting_id ?? $meeting->id ?? 0, (int) ($meeting->start_time ?? 0)), 0, 30);
+    }
+
+    /**
      * Saves meeting details and participants for reporting.
      *
      * @param object $meeting    Normalized meeting object
@@ -519,6 +613,9 @@ class get_meeting_reports extends scheduled_task {
      */
     public function process_meeting_reports($meeting) {
         global $DB;
+
+        $meetingapiidentifier = $this->get_meeting_api_identifier($meeting);
+        $meeting->uuid = $this->get_meeting_instance_uuid($meeting);
 
         $this->debugmsg(sprintf(
             'Processing meeting %s|%s that occurred at %s',
@@ -549,7 +646,7 @@ class get_meeting_reports extends scheduled_task {
         }
 
         try {
-            $participants = $this->service->get_meeting_participants($meeting->uuid, $zoomrecord->webinar);
+            $participants = $this->service->get_meeting_participants($meetingapiidentifier, $zoomrecord->webinar);
         } catch (not_found_exception $e) {
             mtrace(sprintf('Warning: Cannot find meeting %s|%s; skipping', $meeting->meeting_id, $meeting->uuid));
             return true;    // Not really a show stopping error.
@@ -577,13 +674,22 @@ class get_meeting_reports extends scheduled_task {
             // To prevent sending notifications every time the task ran check if there is inserted new records.
             $recordupdated = false;
             foreach ($participants as $rawparticipant) {
+                $participantname = trim($rawparticipant->name ?? $rawparticipant->user_name ?? '');
+                $participantzoomuserid = (string) ($rawparticipant->user_id ?? $rawparticipant->participant_user_id ?? '');
+                $participantuuid = (string) ($rawparticipant->id ?? '');
                 $this->debugmsg(sprintf(
-                    'Working on %s (user_id: %d, uuid: %s)',
-                    $rawparticipant->name,
-                    $rawparticipant->user_id,
-                    $rawparticipant->id
+                    'Working on %s (user_id: %s, uuid: %s)',
+                    $participantname,
+                    $participantzoomuserid,
+                    $participantuuid
                 ));
                 $participant = $this->format_participant($rawparticipant, $detailsid, $names, $emails);
+
+                // Skip rows that have no usable identifier at all.
+                if (empty($participant['name']) && empty($participant['zoomuserid']) && empty($participant['user_email'])) {
+                    $this->debugmsg('Skipping anonymous participant row');
+                    continue;
+                }
 
                 // These conditions are enough.
                 $conditions = [
@@ -612,7 +718,7 @@ class get_meeting_reports extends scheduled_task {
             // Check the grading method settings.
             if (!empty($zoomrecord->grading_method)) {
                 $gradingmethod = $zoomrecord->grading_method;
-            } else if ($defaultgrading = get_config('gradingmethod', 'zoom')) {
+            } else if ($defaultgrading = get_config('zoom', 'gradingmethod')) {
                 $gradingmethod = $defaultgrading;
             } else {
                 $gradingmethod = 'entry';
@@ -980,17 +1086,32 @@ class get_meeting_reports extends scheduled_task {
         $normalizedmeeting->start_time = strtotime($meeting->start_time);
         $normalizedmeeting->end_time = strtotime($meeting->end_time);
 
+        if ($normalizedmeeting->start_time === false) {
+            $normalizedmeeting->start_time = 0;
+        }
+
+        if ($normalizedmeeting->end_time === false) {
+            $normalizedmeeting->end_time = $normalizedmeeting->start_time;
+        }
+
+        if ($normalizedmeeting->end_time < $normalizedmeeting->start_time) {
+            $normalizedmeeting->end_time = $normalizedmeeting->start_time;
+        }
+
         // Copy values that are named the same.
-        $normalizedmeeting->uuid = $meeting->uuid;
-        $normalizedmeeting->topic = $meeting->topic;
+        $normalizedmeeting->uuid = trim((string) ($meeting->uuid ?? ''));
+        $normalizedmeeting->topic = (string) ($meeting->topic ?? '');
 
         // Dashboard API has duration as H:M:S while report has it in seconds.
-        $timeparts = explode(':', $meeting->duration);
+        $rawduration = $meeting->duration ?? null;
+        $timeparts = explode(':', (string) $rawduration);
 
         // Convert duration into seconds.
-        if (count($timeparts) === 1) {
+        if ($rawduration === null || $rawduration === '') {
+            $normalizedmeeting->duration = max(0, $normalizedmeeting->end_time - $normalizedmeeting->start_time);
+        } else if (count($timeparts) === 1) {
             // Time is already in seconds.
-            $normalizedmeeting->duration = intval($meeting->duration);
+            $normalizedmeeting->duration = intval($rawduration);
         } else if (count($timeparts) === 2) {
             // Time is in MM:SS format.
             $normalizedmeeting->duration = 60 * $timeparts[0] + $timeparts[1];
