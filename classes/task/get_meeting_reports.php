@@ -224,6 +224,7 @@ class get_meeting_reports extends scheduled_task {
         $moodleuser = null;
         $moodleuserid = null;
         $name = null;
+        $skipparticipant = false;
 
         // Consolidate fields.
         $participant->name = trim($participant->name ?? $participant->user_name ?? '');
@@ -257,8 +258,12 @@ class get_meeting_reports extends scheduled_task {
 
         // Extract the ID and name from the participant's name if it is in the format "(id)Name".
         if (preg_match('/^\((\d+)\)(.+)$/', $participant->name, $matches)) {
-            $moodleuserid = $matches[1];
             $name = trim($matches[2]);
+            if ($this->is_valid_participant_userid((int) $matches[1])) {
+                $moodleuserid = (int) $matches[1];
+            } else {
+                $skipparticipant = true;
+            }
         } else {
             $name = $participant->name;
         }
@@ -277,8 +282,14 @@ class get_meeting_reports extends scheduled_task {
                 // Found some previous matches. Find first one with userid set.
                 foreach ($participantmatches as $participantmatch) {
                     if (!empty($participantmatch->userid)) {
+                        if (!$this->is_valid_participant_userid((int) $participantmatch->userid)) {
+                            $skipparticipant = true;
+                            continue;
+                        }
+
                         $moodleuserid = $participantmatch->userid;
                         $name = $participantmatch->name;
+                        $skipparticipant = false;
                         break;
                     }
                 }
@@ -305,8 +316,14 @@ class get_meeting_reports extends scheduled_task {
                     }
 
                     if (!empty($participantmatch->userid)) {
+                        if (!$this->is_valid_participant_userid((int) $participantmatch->userid)) {
+                            $skipparticipant = true;
+                            continue;
+                        }
+
                         $moodleuserid = $participantmatch->userid;
                         $name = $participantmatch->name;
+                        $skipparticipant = false;
                         break;
                     }
                 }
@@ -314,7 +331,7 @@ class get_meeting_reports extends scheduled_task {
         }
 
         // Did not find a previous match.
-        if (empty($moodleuserid)) {
+        if (!$skipparticipant && empty($moodleuserid)) {
             if (!empty($participant->user_email) && ($moodleuserid = array_search(strtoupper($participant->user_email), $emails))) {
                 // Found email from list of enrolled users.
                 $name = $names[$moodleuserid];
@@ -343,7 +360,7 @@ class get_meeting_reports extends scheduled_task {
         }
 
         if ($participant->user_email === '') {
-            if (!empty($moodleuserid)) {
+            if (!empty($moodleuserid) && $this->is_valid_participant_userid((int) $moodleuserid)) {
                 $participant->user_email = $DB->get_field('user', 'email', ['id' => $moodleuserid]);
             } else {
                 $participant->user_email = null;
@@ -372,6 +389,7 @@ class get_meeting_reports extends scheduled_task {
             'join_time' => $jointime,
             'leave_time' => $leavetime,
             'duration' => $duration,
+            'skip' => $skipparticipant,
         ];
     }
 
@@ -570,6 +588,44 @@ class get_meeting_reports extends scheduled_task {
     }
 
     /**
+     * Check whether a Moodle user id still exists and is not deleted.
+     *
+     * @param int|null $userid
+     * @return bool
+     */
+    private function is_valid_participant_userid($userid) {
+        global $DB;
+
+        if (empty($userid)) {
+            return false;
+        }
+
+        return $DB->record_exists('user', [
+            'id' => (int) $userid,
+            'deleted' => 0,
+        ]);
+    }
+
+    /**
+     * Return the full name for an active Moodle user.
+     *
+     * @param int $userid
+     * @return string|null
+     */
+    private function get_valid_user_fullname($userid) {
+        if (!$this->is_valid_participant_userid($userid)) {
+            return null;
+        }
+
+        $user = core_user::get_user($userid);
+        if (empty($user) || !empty($user->deleted)) {
+            return null;
+        }
+
+        return fullname($user);
+    }
+
+    /**
      * Get the identifier to use when calling the Zoom participants API.
      *
      * Zoom may omit the UUID for some meeting payloads. In that case, use the
@@ -631,6 +687,11 @@ class get_meeting_reports extends scheduled_task {
             return true;
         }
 
+        if (!get_coursemodule_from_instance('zoom', $zoomrecord->id, $zoomrecord->course, false, IGNORE_MISSING)) {
+            mtrace(sprintf('Meeting %s activity instance is missing locally; skipping', $meeting->meeting_id));
+            return true;
+        }
+
         $meeting->zoomid = $zoomrecord->id;
 
         // Insert or update meeting details.
@@ -685,9 +746,21 @@ class get_meeting_reports extends scheduled_task {
                 ));
                 $participant = $this->format_participant($rawparticipant, $detailsid, $names, $emails);
 
+                if (!empty($participant['skip'])) {
+                    $this->debugmsg('Skipping participant with stale or deleted Moodle user mapping');
+                    continue;
+                }
+
+                unset($participant['skip']);
+
                 // Skip rows that have no usable identifier at all.
                 if (empty($participant['name']) && empty($participant['zoomuserid']) && empty($participant['user_email'])) {
                     $this->debugmsg('Skipping anonymous participant row');
+                    continue;
+                }
+
+                if (!empty($participant['userid']) && !$this->is_valid_participant_userid((int) $participant['userid'])) {
+                    $this->debugmsg('Skipping participant because resolved Moodle user no longer exists');
                     continue;
                 }
 
@@ -834,7 +907,7 @@ class get_meeting_reports extends scheduled_task {
             $newgrade = min($userduration * $grademax / $meetingduration, $grademax);
 
             // Double check that this is a Moodle user.
-            if (is_integer($userid) && (isset($found[$userid]) || $DB->record_exists('user', ['id' => $userid]))) {
+            if (is_integer($userid) && (isset($found[$userid]) || $this->is_valid_participant_userid($userid))) {
                 // Successfully found this user in Moodle.
                 if (!isset($found[$userid])) {
                     $found[$userid] = true;
@@ -872,7 +945,9 @@ class get_meeting_reports extends scheduled_task {
                                         . ', New grade: ' . $newgrade);
                     }
                 } else {
-                    $notenrolled[$userid] = fullname(core_user::get_user($userid));
+                    if ($fullname = $this->get_valid_user_fullname($userid)) {
+                        $notenrolled[$userid] = $fullname;
+                    }
                 }
             } else {
                 // This means that this user was not identified.
@@ -890,7 +965,9 @@ class get_meeting_reports extends scheduled_task {
         $notfound = [];
         foreach ($allusers as $userid) {
             if (!isset($found[$userid])) {
-                $notfound[$userid] = fullname(core_user::get_user($userid));
+                if ($fullname = $this->get_valid_user_fullname($userid)) {
+                    $notfound[$userid] = $fullname;
+                }
             }
         }
 

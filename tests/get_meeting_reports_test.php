@@ -407,7 +407,7 @@ final class get_meeting_reports_test extends advanced_testcase {
      * Tests process_meeting_reports() when participant UUID and duration are missing.
      */
     public function test_process_meeting_reports_missing_uuid_and_duration(): void {
-        global $DB, $SITE;
+        global $DB;
 
         $this->assertEquals(0, $DB->count_records('zoom_meeting_details'));
         $this->assertEquals(0, $DB->count_records('zoom_meeting_participants'));
@@ -436,8 +436,9 @@ final class get_meeting_reports_test extends advanced_testcase {
         $meeting->duration = 177;
         $meeting->participants = 1;
 
-        $DB->insert_record('zoom', [
-            'course' => $SITE->id,
+        $generator = $this->getDataGenerator()->get_plugin_generator('mod_zoom');
+        $generator->create_instance([
+            'course' => $this->getDataGenerator()->create_course()->id,
             'meeting_id' => $meeting->id,
             'name' => 'Zoom',
             'exists_on_zoom' => ZOOM_MEETING_EXISTS,
@@ -466,7 +467,7 @@ final class get_meeting_reports_test extends advanced_testcase {
      * Tests process_meeting_reports() when the meeting UUID is missing.
      */
     public function test_process_meeting_reports_missing_meeting_uuid(): void {
-        global $DB, $SITE;
+        global $DB;
 
         $this->assertEquals(0, $DB->count_records('zoom_meeting_details'));
         $this->assertEquals(0, $DB->count_records('zoom_meeting_participants'));
@@ -496,8 +497,9 @@ final class get_meeting_reports_test extends advanced_testcase {
             'participants' => 1,
         ];
 
-        $DB->insert_record('zoom', [
-            'course' => $SITE->id,
+        $generator = $this->getDataGenerator()->get_plugin_generator('mod_zoom');
+        $generator->create_instance([
+            'course' => $this->getDataGenerator()->create_course()->id,
             'meeting_id' => $meeting->id,
             'name' => 'Zoom',
             'exists_on_zoom' => ZOOM_MEETING_EXISTS,
@@ -512,6 +514,127 @@ final class get_meeting_reports_test extends advanced_testcase {
 
         $details = $DB->get_record('zoom_meeting_details', [], '*', MUST_EXIST);
         $this->assertSame('m:96828262363:1773565927', $details->uuid);
+    }
+
+    /**
+     * Tests process_meeting_reports() skips orphaned Zoom activity rows.
+     */
+    public function test_process_meeting_reports_skips_missing_activity_instance(): void {
+        global $DB;
+
+        $course = $this->getDataGenerator()->create_course();
+        $this->expectOutputRegex('/Meeting 2000001 activity instance is missing locally; skipping/');
+
+        $meeting = (object) [
+            'id' => 2000001,
+            'topic' => 'Orphaned meeting',
+            'start_time' => '2026-03-15T09:12:07Z',
+            'end_time' => '2026-03-15T09:15:04Z',
+            'uuid' => 'orphaned-meeting-uuid',
+            'duration' => 177,
+            'participants' => 1,
+        ];
+
+        $DB->insert_record('zoom', [
+            'course' => $course->id,
+            'meeting_id' => $meeting->id,
+            'name' => 'Orphan Zoom',
+            'exists_on_zoom' => ZOOM_MEETING_EXISTS,
+        ]);
+
+        $mockwwebservice = $this->createMock('\mod_zoom\webservice');
+        $mockwwebservice->expects($this->never())
+            ->method('get_meeting_participants');
+
+        $this->meetingtask->service = $mockwwebservice;
+        $meeting = $this->meetingtask->normalize_meeting($meeting);
+
+        $this->assertTrue($this->meetingtask->process_meeting_reports($meeting));
+        $this->assertEquals(0, $DB->count_records('zoom_meeting_details'));
+        $this->assertEquals(0, $DB->count_records('zoom_meeting_participants'));
+    }
+
+    /**
+     * Tests process_meeting_reports() skips rows mapped to deleted users.
+     */
+    public function test_process_meeting_reports_skips_deleted_user_mapping(): void {
+        global $DB;
+
+        $this->setAdminUser();
+
+        $course = $this->getDataGenerator()->create_course();
+        $user = $this->getDataGenerator()->create_user([
+            'firstname' => 'Deleted',
+            'lastname' => 'Participant',
+            'email' => 'deletedparticipant@example.com',
+        ]);
+
+        $generator = $this->getDataGenerator()->get_plugin_generator('mod_zoom');
+        $instance = $generator->create_instance([
+            'course' => $course->id,
+            'meeting_id' => 96828262364,
+            'name' => 'Zoom',
+            'exists_on_zoom' => ZOOM_MEETING_EXISTS,
+        ]);
+
+        $historydetailsid = $DB->insert_record('zoom_meeting_details', [
+            'uuid' => 'deleted-history-uuid',
+            'meeting_id' => 96828262364,
+            'end_time' => 1773671704,
+            'start_time' => 1773671527,
+            'duration' => 177,
+            'topic' => 'History topic',
+            'participants_count' => 1,
+            'zoomid' => $instance->id,
+        ]);
+
+        $DB->insert_record('zoom_meeting_participants', [
+            'name' => 'DELETED PARTICIPANT',
+            'userid' => $user->id,
+            'detailsid' => $historydetailsid,
+            'zoomuserid' => '16791553',
+            'uuid' => null,
+            'user_email' => 'deletedparticipant@example.com',
+            'join_time' => 1773671600,
+            'leave_time' => 1773671660,
+            'duration' => 60,
+        ]);
+
+        delete_user($user);
+
+        $this->mockparticipantsdata = [];
+        $participant = (object) [
+            'id' => '',
+            'user_id' => '16791553',
+            'user_name' => 'Deleted Participant',
+            'user_email' => 'deletedparticipant@example.com',
+            'join_time' => '2026-03-15T09:14:33Z',
+            'leave_time' => '2026-03-15T09:15:04Z',
+        ];
+        $this->mockparticipantsdata['deleted_user_payload'][] = $participant;
+
+        $mockwwebservice = $this->createMock('\mod_zoom\webservice');
+        $mockwwebservice->method('get_meeting_participants')
+            ->will($this->returnCallback([$this, 'mock_get_meeting_participants']));
+
+        $meeting = (object) [
+            'id' => 96828262364,
+            'topic' => 'Some meeting',
+            'start_time' => '2026-03-15T09:12:07Z',
+            'end_time' => '2026-03-15T09:15:04Z',
+            'uuid' => 'deleted_user_payload',
+            'duration' => 177,
+            'participants' => 1,
+        ];
+
+        $this->meetingtask->service = $mockwwebservice;
+        $meeting = $this->meetingtask->normalize_meeting($meeting);
+
+        $this->assertTrue($this->meetingtask->process_meeting_reports($meeting));
+
+        $currentdetails = $DB->get_record('zoom_meeting_details', ['uuid' => 'deleted_user_payload'], '*', MUST_EXIST);
+        $this->assertEquals(0, $DB->count_records('zoom_meeting_participants', ['detailsid' => $currentdetails->id]));
+        $this->assertEquals(1, $DB->count_records('zoom_meeting_participants'));
     }
 
     /**
