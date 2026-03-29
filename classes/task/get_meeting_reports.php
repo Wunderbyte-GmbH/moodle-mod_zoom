@@ -256,13 +256,14 @@ class get_meeting_reports extends scheduled_task {
         // Cleanup the name. For some reason # gets into the name instead of a comma.
         $participant->name = str_replace('#', ',', $participant->name);
 
-        // Extract the ID and name from the participant's name if it is in the format "(id)Name".
-        if (preg_match('/^\((\d+)\)(.+)$/', $participant->name, $matches)) {
+        // Extract the ID and name from the participant's name if it is in the format "(id)" or "(id) Name".
+        // This handles the 'idfullname' format "(5) John Doe" and the 'id' format "(5)".
+        if (preg_match('/^\((\d+)\)(.*)$/', $participant->name, $matches)) {
+            $moodleuserid = $matches[1];
             $name = trim($matches[2]);
-            if ($this->is_valid_participant_userid((int) $matches[1])) {
-                $moodleuserid = (int) $matches[1];
-            } else {
-                $skipparticipant = true;
+            // If no name follows the ID (e.g. unamedisplay = 'id'), keep the raw participant name.
+            if ($name === '') {
+                $name = $participant->name;
             }
         } else {
             $name = $participant->name;
@@ -787,7 +788,9 @@ class get_meeting_reports extends scheduled_task {
                 }
             }
 
-            // If there are new records and the grading method is attendance duration.
+            // If the grading method is attendance duration, re-evaluate grades for all participants.
+            // This runs on every task execution so grades are corrected if Zoom's API later returns
+            // updated/accurate duration data. Individual grade updates only fire when a grade improves.
             // Check the grading method settings.
             if (!empty($zoomrecord->grading_method)) {
                 $gradingmethod = $zoomrecord->grading_method;
@@ -797,7 +800,7 @@ class get_meeting_reports extends scheduled_task {
                 $gradingmethod = 'entry';
             }
 
-            if ($recordupdated && $gradingmethod === 'period') {
+            if ($gradingmethod === 'period') {
                 // Grade users according to their duration in the meeting.
                 $this->grading_participant_upon_duration($zoomrecord, $detailsid);
             }
